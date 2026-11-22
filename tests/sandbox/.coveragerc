@@ -1,0 +1,15 @@
+[run]
+branch = True
+parallel = True
+source = setup3ui
+disable_warnings = module-not-imported,no-data-collected
+
+[paths]
+source =
+    /work/setup3ui
+    /sandbox/*/tmp/*/source/setup3ui
+    /usr/local/lib/setup-3x-ui/app/setup3ui
+
+[report]
+precision = 2
+show_missing = True

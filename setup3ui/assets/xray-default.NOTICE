@@ -1,0 +1,5 @@
+xray-default.json is the default Xray configuration from 3x-ui v3.11.0.
+It is distributed under the GNU General Public License, version 3.
+See xray-default.LICENSE for the license text.
+
+Source: https://github.com/MHSanaei/3x-ui/blob/v3.11.0/internal/web/service/config.json

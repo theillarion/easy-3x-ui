@@ -1,0 +1,61 @@
+{
+  "enable": true,
+  "remark": "CDN-XHTTP (Selectel)",
+  "listen": "127.0.0.1",
+  "port": 8080,
+  "protocol": "vless",
+  "expiryTime": 0,
+  "total": 0,
+  "settings": {
+    "clients": [],
+    "decryption": "none",
+    "encryption": "none"
+  },
+  "sniffing": {
+    "enabled": true,
+    "destOverride": [
+      "http",
+      "tls",
+      "quic"
+    ]
+  },
+  "streamSettings": {
+    "network": "xhttp",
+    "security": "none",
+    "externalProxy": [
+      {
+        "forceTls": "tls",
+        "dest": "edge.example.org",
+        "port": 443,
+        "remark": "Selectel CDN"
+      }
+    ],
+    "xhttpSettings": {
+      "path": "/media/hls/9636f214/index.m3u8",
+      "mode": "packet-up",
+      "sessionIDPlacement": "path",
+      "seqPlacement": "path",
+      "uplinkDataPlacement": "body",
+      "uplinkHTTPMethod": "DELETE",
+      "xPaddingBytes": "80-240",
+      "xPaddingObfsMode": true,
+      "xPaddingKey": "q",
+      "xPaddingHeader": "X-Client-Version",
+      "xPaddingPlacement": "query",
+      "xPaddingMethod": "tokenish",
+      "noSSEHeader": false,
+      "scMaxBufferedPosts": 30,
+      "scStreamUpServerSecs": "20-80",
+      "serverMaxHeaderBytes": 0,
+      "enableXmux": true,
+      "xmux": {
+        "maxConcurrency": "16-32",
+        "maxConnections": 0,
+        "cMaxReuseTimes": 1000,
+        "hMaxRequestTimes": "600-900",
+        "hMaxReusableSecs": "100",
+        "hKeepAlivePeriod": 20000
+      }
+    }
+  }
+}

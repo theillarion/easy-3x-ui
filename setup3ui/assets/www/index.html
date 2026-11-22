@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MediaFlow Gateway — Edge Delivery for Live and VOD</title>
+<meta name="description" content="MediaFlow Gateway delivers HLS and DASH streams from edge locations with sub-second startup and per-request telemetry.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b1220'/%3E%3Cpath d='M9 9h5v14H9zM18 9l7 7-7 7z' fill='%2338d6c8'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="index.html"><span class="mark">M</span> MediaFlow</a>
+    <button class="burger" id="burger" aria-label="Toggle menu">☰</button>
+    <nav class="menu" id="menu">
+      <a href="platform.html">Platform</a>
+      <a href="pricing.html">Pricing</a>
+      <a href="docs.html">Docs</a>
+      <a href="status.html">Status</a>
+      <a href="about.html">About</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap hero">
+  <a class="pill" href="status.html"><span class="dot"></span> All systems operational</a>
+  <h1>Edge delivery for <span class="grad">live and on-demand</span> media</h1>
+  <p class="lead">
+    MediaFlow Gateway ingests HLS and DASH origin streams and serves them from edge
+    locations with sub-second startup, adaptive bitrate ladders and per-request telemetry.
+  </p>
+  <div class="cta">
+    <a class="btn primary" href="pricing.html">View plans</a>
+    <a class="btn" href="docs.html">Read the docs</a>
+  </div>
+</div>
+
+<section>
+  <div class="wrap">
+    <h2>Built for playback, not for file transfer</h2>
+    <p class="sub">Everything the edge does before a single frame reaches the player.</p>
+    <div class="grid">
+      <div class="card feat">
+        <div class="ic">⚡</div>
+        <h3>Sub-second startup</h3>
+        <p>Playlist pre-warming and segment pre-fetch bring time-to-first-frame below one second on warm edges.</p>
+      </div>
+      <div class="card feat">
+        <div class="ic">🎚</div>
+        <h3>Adaptive ladder</h3>
+        <p>Rendition switching driven by measured throughput instead of a fixed bitrate ceiling.</p>
+      </div>
+      <div class="card feat">
+        <div class="ic">📈</div>
+        <h3>Per-request telemetry</h3>
+        <p>Every segment request is logged with edge, cache state and upstream timing.</p>
+      </div>
+      <div class="card feat">
+        <div class="ic">🛡</div>
+        <h3>Tokenised access</h3>
+        <p>Signed URLs and short-lived session tokens keep playlists private without cookies.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="grid two">
+      <div class="card pad">
+        <h2>Global footprint</h2>
+        <p class="sub" style="margin-bottom:14px">41 edge locations across four regions, anycast routed.</p>
+        <table>
+          <tbody>
+            <tr><td>Europe</td><td class="num">14 locations</td></tr>
+            <tr><td>CIS</td><td class="num">9 locations</td></tr>
+            <tr><td>APAC</td><td class="num">11 locations</td></tr>
+            <tr><td>North America</td><td class="num">7 locations</td></tr>
+          </tbody>
+        </table>
+        <p class="mt"><a class="btn sm" href="status.html">Live status →</a></p>
+      </div>
+      <div class="card pad">
+        <h2>Drop-in integration</h2>
+        <p class="sub" style="margin-bottom:14px">Keep your origin. Change one URL.</p>
+        <pre class="raw"># publish an HLS playlist
+POST /api/uploadFile/upload.m3u8
+Content-Type: application/vnd.apple.mpegurl
+Authorization: Bearer &lt;session-token&gt;
+
+#EXTM3U
+#EXT-X-VERSION:6
+#EXT-X-TARGETDURATION:4
+#EXTINF:4.000,
+segment-00001.ts</pre>
+        <p class="mt"><a class="btn sm" href="docs.html">Full API reference →</a></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="cols">
+      <div>
+        <h4>Product</h4>
+        <ul>
+          <li><a href="platform.html">Platform</a></li>
+          <li><a href="pricing.html">Pricing</a></li>
+          <li><a href="status.html">Status</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Developers</h4>
+        <ul>
+          <li><a href="docs.html">Documentation</a></li>
+          <li><a href="docs.html#api">API reference</a></li>
+          <li><a href="docs.html#quickstart">Quickstart</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Company</h4>
+        <ul>
+          <li><a href="about.html">About</a></li>
+          <li><a href="about.html#contact">Contact</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Legal</h4>
+        <ul>
+          <li><a href="about.html#terms">Terms of service</a></li>
+          <li><a href="about.html#terms">Privacy policy</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="base">
+      <span>© <span data-year>2026</span> MediaFlow Gateway</span>
+      <span class="r" id="edge">edge: gateway</span>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/app.js"></script>
+</body>
+</html>

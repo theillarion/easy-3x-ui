@@ -1,0 +1,19 @@
+# Caddy with two CDN backends.
+# Set both admin fields in a private copy for a fresh install from YAML.
+# admin_username: vpn-admin
+# admin_password: "change this password"
+domain: example.com
+email: admin@example.com
+# docker_user: deploy  # Uses the user who ran sudo when omitted.
+https: caddy
+reality: true
+direct_xhttp: true
+# inbound_templates:
+#   direct_xhttp: /etc/setup-3x-ui/templates/direct-xhttp.json
+cdn:
+  - provider: selectel
+    edge: edge.example.com
+    path: /media/hls/9636f214/index.m3u8
+  - provider: yandex
+    edge: edge2.example.com
+    path: generate

@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Platform — MediaFlow Gateway</title>
+<meta name="description" content="How MediaFlow Gateway ingests, packages and delivers media from the edge.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b1220'/%3E%3Cpath d='M9 9h5v14H9zM18 9l7 7-7 7z' fill='%2338d6c8'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="index.html"><span class="mark">M</span> MediaFlow</a>
+    <button class="burger" id="burger" aria-label="Toggle menu">☰</button>
+    <nav class="menu" id="menu">
+      <a href="platform.html">Platform</a>
+      <a href="pricing.html">Pricing</a>
+      <a href="docs.html">Docs</a>
+      <a href="status.html">Status</a>
+      <a href="about.html">About</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap page-head">
+  <div class="crumbs"><a href="index.html">Home</a> / Platform</div>
+  <h1 style="font-size:clamp(26px,4vw,36px)">How the gateway works</h1>
+  <p class="lead">Ingest, package, cache, deliver. Four stages, each observable on its own.</p>
+</div>
+
+<section style="padding-top:0">
+  <div class="wrap">
+    <div class="grid">
+      <div class="card feat">
+        <div class="ic">1</div>
+        <h3>Ingest</h3>
+        <p>An origin publishes a playlist and its segments. The gateway accepts CMAF, TS and fragmented MP4.</p>
+      </div>
+      <div class="card feat">
+        <div class="ic">2</div>
+        <h3>Package</h3>
+        <p>Segments are re-indexed and, when requested, repackaged into HLS or DASH without re-encoding.</p>
+      </div>
+      <div class="card feat">
+        <div class="ic">3</div>
+        <h3>Cache</h3>
+        <p>Objects land on the nearest edge with a short TTL. Cache state is reported per request.</p>
+      </div>
+      <div class="card feat">
+        <div class="ic">4</div>
+        <h3>Deliver</h3>
+        <p>Players pull over HTTP/2 or HTTP/3 with byte-range requests for fast seeking.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Technical specification</h2>
+    <p class="sub">What the edge guarantees.</p>
+    <div class="card pad">
+      <table>
+        <thead><tr><th>Item</th><th>Value</th></tr></thead>
+        <tbody>
+          <tr><td>Protocols</td><td>HTTP/1.1, HTTP/2, HTTP/3 (QUIC)</td></tr>
+          <tr><td>Formats</td><td>HLS, MPEG-DASH, CMAF, fragmented MP4</td></tr>
+          <tr><td>Max object size</td><td>512 MB per request</td></tr>
+          <tr><td>Playlist TTL</td><td>2 s (live), 300 s (VOD)</td></tr>
+          <tr><td>Segment TTL</td><td>30 s (live), 86400 s (VOD)</td></tr>
+          <tr><td>Purge propagation</td><td>&lt; 3 s globally</td></tr>
+          <tr><td>TLS</td><td>1.2 minimum, 1.3 preferred, ECDSA and RSA</td></tr>
+          <tr><td>Signed URLs</td><td>HMAC-SHA256, TTL from 30 s to 7 days</td></tr>
+          <tr><td>Log delivery</td><td>NDJSON webhook, batched every 10 s</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="grid two">
+      <div class="card pad">
+        <h3>Origin shielding</h3>
+        <p class="small">
+          A single edge is promoted to shield for each region. Misses collapse into one upstream
+          request per object, which keeps small origins from being overwhelmed during a live event.
+        </p>
+      </div>
+      <div class="card pad">
+        <h3>Request collapsing</h3>
+        <p class="small">
+          Concurrent requests for the same segment are held behind a single upstream fetch and
+          released together, so a thousand viewers cost one origin round trip.
+        </p>
+      </div>
+      <div class="card pad">
+        <h3>Graceful degradation</h3>
+        <p class="small">
+          If an edge loses its upstream it keeps serving cached segments and marks the region
+          degraded rather than failing the playback session outright.
+        </p>
+      </div>
+      <div class="card pad">
+        <h3>Observability</h3>
+        <p class="small">
+          Every request carries an edge identifier, cache state and upstream timing, exposed both
+          in the log stream and on the status page.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="cols">
+      <div><h4>Product</h4><ul>
+        <li><a href="platform.html">Platform</a></li>
+        <li><a href="pricing.html">Pricing</a></li>
+        <li><a href="status.html">Status</a></li></ul></div>
+      <div><h4>Developers</h4><ul>
+        <li><a href="docs.html">Documentation</a></li>
+        <li><a href="docs.html#api">API reference</a></li>
+        <li><a href="docs.html#quickstart">Quickstart</a></li></ul></div>
+      <div><h4>Company</h4><ul>
+        <li><a href="about.html">About</a></li>
+        <li><a href="about.html#contact">Contact</a></li></ul></div>
+      <div><h4>Legal</h4><ul>
+        <li><a href="about.html#terms">Terms of service</a></li>
+        <li><a href="about.html#terms">Privacy policy</a></li></ul></div>
+    </div>
+    <div class="base">
+      <span>© <span data-year>2026</span> MediaFlow Gateway</span>
+      <span class="r" id="edge">edge: gateway</span>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/app.js"></script>
+</body>
+</html>

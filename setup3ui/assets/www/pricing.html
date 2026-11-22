@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pricing — MediaFlow Gateway</title>
+<meta name="description" content="Usage-based pricing for MediaFlow Gateway. No minimum commitment on the Starter plan.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b1220'/%3E%3Cpath d='M9 9h5v14H9zM18 9l7 7-7 7z' fill='%2338d6c8'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="index.html"><span class="mark">M</span> MediaFlow</a>
+    <button class="burger" id="burger" aria-label="Toggle menu">☰</button>
+    <nav class="menu" id="menu">
+      <a href="platform.html">Platform</a>
+      <a href="pricing.html">Pricing</a>
+      <a href="docs.html">Docs</a>
+      <a href="status.html">Status</a>
+      <a href="about.html">About</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap page-head">
+  <div class="crumbs"><a href="index.html">Home</a> / Pricing</div>
+  <h1 style="font-size:clamp(26px,4vw,36px)">Pay for what you deliver</h1>
+  <p class="lead">No seat licences, no per-title encoding fees. Traffic and requests, billed monthly.</p>
+</div>
+
+<section style="padding-top:0">
+  <div class="wrap">
+    <div class="grid three">
+
+      <div class="card plan">
+        <div>
+          <h3>Starter</h3>
+          <div class="price">$0<span> / month</span></div>
+          <p class="small">For side projects and evaluation. No card required.</p>
+        </div>
+        <ul>
+          <li>100 GB delivery / month</li>
+          <li>1 origin</li>
+          <li>3 edge regions</li>
+          <li>Shared TLS certificate</li>
+          <li>Community support</li>
+        </ul>
+        <a class="btn block" href="docs.html#quickstart">Start free</a>
+      </div>
+
+      <div class="card plan hot">
+        <div>
+          <h3>Growth <span class="tag">popular</span></h3>
+          <div class="price">$49<span> / month</span></div>
+          <p class="small">For production streams that need room to grow.</p>
+        </div>
+        <ul>
+          <li>5 TB delivery included</li>
+          <li>Unlimited origins</li>
+          <li>All 41 edge locations</li>
+          <li>Custom domains and certificates</li>
+          <li>Signed URLs and token auth</li>
+          <li>Log streaming, 7-day retention</li>
+        </ul>
+        <a class="btn primary block" href="about.html#contact">Choose Growth</a>
+      </div>
+
+      <div class="card plan">
+        <div>
+          <h3>Scale</h3>
+          <div class="price">Custom</div>
+          <p class="small">For large live events and multi-region rollouts.</p>
+        </div>
+        <ul>
+          <li>Volume pricing from 50 TB</li>
+          <li>Dedicated edge capacity</li>
+          <li>Origin shielding and request collapsing</li>
+          <li>99.99% delivery SLA</li>
+          <li>Named engineer, 24/7 escalation</li>
+        </ul>
+        <a class="btn block" href="about.html#contact">Talk to sales</a>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>What is metered</h2>
+    <p class="sub">Everything else is unmetered.</p>
+    <div class="card pad">
+      <table>
+        <thead><tr><th>Metric</th><th>Starter</th><th>Growth</th><th>Scale</th></tr></thead>
+        <tbody>
+          <tr><td>Delivery</td><td class="num">100 GB</td><td class="num">5 TB</td><td class="num">from 50 TB</td></tr>
+          <tr><td>Requests</td><td class="num">5 M</td><td class="num">500 M</td><td class="num">unmetered</td></tr>
+          <tr><td>Extra delivery</td><td>—</td><td class="num">$9 / TB</td><td class="num">volume</td></tr>
+          <tr><td>Log retention</td><td class="num">24 h</td><td class="num">7 days</td><td class="num">90 days</td></tr>
+          <tr><td>Purge requests</td><td class="num">1 000 / mo</td><td class="num">unmetered</td><td class="num">unmetered</td></tr>
+          <tr><td>Support</td><td>community</td><td>email, 1 business day</td><td>24/7</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="grid two">
+      <div class="card pad">
+        <h3>Billing</h3>
+        <p class="small">
+          Usage is aggregated hourly and invoiced at the end of each calendar month. Overage on
+          Growth is charged at the per-terabyte rate with no penalty tier.
+        </p>
+      </div>
+      <div class="card pad">
+        <h3>Fair use</h3>
+        <p class="small">
+          The Starter plan is intended for evaluation. Sustained delivery above 100 GB per month
+          will be asked to move to Growth rather than throttled without notice.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="cols">
+      <div><h4>Product</h4><ul>
+        <li><a href="platform.html">Platform</a></li>
+        <li><a href="pricing.html">Pricing</a></li>
+        <li><a href="status.html">Status</a></li></ul></div>
+      <div><h4>Developers</h4><ul>
+        <li><a href="docs.html">Documentation</a></li>
+        <li><a href="docs.html#api">API reference</a></li>
+        <li><a href="docs.html#quickstart">Quickstart</a></li></ul></div>
+      <div><h4>Company</h4><ul>
+        <li><a href="about.html">About</a></li>
+        <li><a href="about.html#contact">Contact</a></li></ul></div>
+      <div><h4>Legal</h4><ul>
+        <li><a href="about.html#terms">Terms of service</a></li>
+        <li><a href="about.html#terms">Privacy policy</a></li></ul></div>
+    </div>
+    <div class="base">
+      <span>© <span data-year>2026</span> MediaFlow Gateway</span>
+      <span class="r" id="edge">edge: gateway</span>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/app.js"></script>
+</body>
+</html>

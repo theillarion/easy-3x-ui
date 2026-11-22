@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Documentation — MediaFlow Gateway</title>
+<meta name="description" content="Quickstart, publishing playlists and the MediaFlow Gateway HTTP API.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b1220'/%3E%3Cpath d='M9 9h5v14H9zM18 9l7 7-7 7z' fill='%2338d6c8'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="index.html"><span class="mark">M</span> MediaFlow</a>
+    <button class="burger" id="burger" aria-label="Toggle menu">☰</button>
+    <nav class="menu" id="menu">
+      <a href="platform.html">Platform</a>
+      <a href="pricing.html">Pricing</a>
+      <a href="docs.html">Docs</a>
+      <a href="status.html">Status</a>
+      <a href="about.html">About</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap page-head">
+  <div class="crumbs"><a href="index.html">Home</a> / Documentation</div>
+  <h1 style="font-size:clamp(26px,4vw,36px)">Documentation</h1>
+  <p class="lead">Everything needed to publish a stream and play it back.</p>
+</div>
+
+<section style="padding-top:0">
+  <div class="wrap doc">
+    <nav>
+      <a href="#quickstart">Quickstart</a>
+      <a href="#publish">Publishing a playlist</a>
+      <a href="#api">HTTP API</a>
+      <a href="#playback">Playback</a>
+      <a href="#errors">Error codes</a>
+    </nav>
+
+    <div>
+      <h3 id="quickstart" style="margin-top:0">Quickstart</h3>
+      <p>
+        Point your origin at the gateway, publish a playlist, then hand the playlist URL to
+        the player. Nothing has to be installed on the origin.
+      </p>
+      <pre class="raw"><code># 1. verify the edge is reachable
+curl -s https://your-origin.example/health
+
+# 2. publish a playlist
+curl -X POST https://your-origin.example/api/uploadFile/upload.m3u8 \
+     -H "Authorization: Bearer $TOKEN" \
+     -H "Content-Type: application/vnd.apple.mpegurl" \
+     --data-binary @index.m3u8</code></pre>
+
+      <h3 id="publish">Publishing a playlist</h3>
+      <p>
+        Playlists are published to the object path that matches your configured route. The
+        gateway stores them with a short TTL and rewrites segment references to edge-relative
+        URLs on the way out.
+      </p>
+      <pre class="raw"><code>POST /api/uploadFile/upload.m3u8
+Content-Type: application/vnd.apple.mpegurl
+Authorization: Bearer &lt;session-token&gt;
+
+#EXTM3U
+#EXT-X-VERSION:6
+#EXT-X-TARGETDURATION:4
+#EXT-X-MEDIA-SEQUENCE:0
+#EXTINF:4.000,
+segment-00001.ts
+#EXTINF:4.000,
+segment-00002.ts
+#EXT-X-ENDLIST</code></pre>
+      <p class="small">
+        The route path is configurable per deployment. Requests to the directory itself
+        (<code>/api/uploadFile</code>) return <code>404</code> by design.
+      </p>
+
+      <h3 id="api">HTTP API</h3>
+      <div class="card pad">
+        <table>
+          <thead><tr><th>Method</th><th>Path</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td><code>GET</code></td><td><code>/health</code></td><td>Liveness and build info</td></tr>
+            <tr><td><code>POST</code></td><td><code>/api/uploadFile/upload.m3u8</code></td><td>Publish or refresh a playlist</td></tr>
+            <tr><td><code>GET</code></td><td><code>/api/uploadFile/&lt;asset&gt;</code></td><td>Fetch a stored asset</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3 id="playback">Playback</h3>
+      <p>
+        Any HLS-capable player will do. Provide the playlist URL and, if you use signed access,
+        a token in the query string or the <code>Authorization</code> header.
+      </p>
+      <pre class="raw"><code>&lt;video controls playsinline
+       src="https://cdn.example/stream/master.m3u8?token=..."&gt;&lt;/video&gt;</code></pre>
+
+      <h3 id="errors">Error codes</h3>
+      <div class="card pad">
+        <table>
+          <thead><tr><th>Code</th><th>Meaning</th><th>What to do</th></tr></thead>
+          <tbody>
+            <tr><td><code>200</code></td><td>OK</td><td>—</td></tr>
+            <tr><td><code>400</code></td><td>Malformed playlist or parameters</td><td>Validate the manifest</td></tr>
+            <tr><td><code>401</code></td><td>Missing or expired token</td><td>Reissue the signed URL</td></tr>
+            <tr><td><code>404</code></td><td>Unknown object</td><td>Check the published path</td></tr>
+            <tr><td><code>429</code></td><td>Rate limited</td><td>Back off and retry</td></tr>
+            <tr><td><code>502</code></td><td>Upstream origin unreachable</td><td>Check the origin, not the edge</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="notice">
+        Need something not covered here? <a href="about.html#contact">Get in touch</a> — we document
+        every question that comes up more than twice.
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="cols">
+      <div><h4>Product</h4><ul>
+        <li><a href="platform.html">Platform</a></li>
+        <li><a href="pricing.html">Pricing</a></li>
+        <li><a href="status.html">Status</a></li></ul></div>
+      <div><h4>Developers</h4><ul>
+        <li><a href="docs.html">Documentation</a></li>
+        <li><a href="docs.html#api">API reference</a></li>
+        <li><a href="docs.html#quickstart">Quickstart</a></li></ul></div>
+      <div><h4>Company</h4><ul>
+        <li><a href="about.html">About</a></li>
+        <li><a href="about.html#contact">Contact</a></li></ul></div>
+      <div><h4>Legal</h4><ul>
+        <li><a href="about.html#terms">Terms of service</a></li>
+        <li><a href="about.html#terms">Privacy policy</a></li></ul></div>
+    </div>
+    <div class="base">
+      <span>© <span data-year>2026</span> MediaFlow Gateway</span>
+      <span class="r" id="edge">edge: gateway</span>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/app.js"></script>
+</body>
+</html>

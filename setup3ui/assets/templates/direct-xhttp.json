@@ -1,0 +1,27 @@
+{
+  "enable": true,
+  "remark": "Direct XHTTP REALITY",
+  "protocol": "vless",
+  "settings": {
+    "decryption": "none",
+    "encryption": "none"
+  },
+  "sniffing": {
+    "enabled": false
+  },
+  "streamSettings": {
+    "network": "xhttp",
+    "security": "reality",
+    "xhttpSettings": {
+      "mode": "auto"
+    },
+    "realitySettings": {
+      "show": false,
+      "xver": 0,
+      "settings": {
+        "fingerprint": "chrome",
+        "spiderX": "/"
+      }
+    }
+  }
+}

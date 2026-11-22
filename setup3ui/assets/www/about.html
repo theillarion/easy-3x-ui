@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>About — MediaFlow Gateway</title>
+<meta name="description" content="About MediaFlow Gateway, our offices and how to reach the team.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b1220'/%3E%3Cpath d='M9 9h5v14H9zM18 9l7 7-7 7z' fill='%2338d6c8'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="index.html"><span class="mark">M</span> MediaFlow</a>
+    <button class="burger" id="burger" aria-label="Toggle menu">☰</button>
+    <nav class="menu" id="menu">
+      <a href="platform.html">Platform</a>
+      <a href="pricing.html">Pricing</a>
+      <a href="docs.html">Docs</a>
+      <a href="status.html">Status</a>
+      <a href="about.html">About</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap page-head">
+  <div class="crumbs"><a href="index.html">Home</a> / About</div>
+  <h1 style="font-size:clamp(26px,4vw,36px)">About the gateway</h1>
+  <p class="lead">We run the layer between an origin and a player, and nothing else.</p>
+</div>
+
+<section style="padding-top:0">
+  <div class="wrap">
+    <div class="grid two">
+      <div class="card pad">
+        <h3>What we do</h3>
+        <p class="small">
+          MediaFlow Gateway is a delivery layer for streaming media. We do not transcode, we do
+          not host libraries, and we do not touch the player. We take what your packager produced
+          and get it to the viewer with the smallest possible gap between request and first frame.
+        </p>
+      </div>
+      <div class="card pad">
+        <h3>How we work</h3>
+        <p class="small">
+          The network is built from commodity hardware in carrier-neutral facilities, with a
+          single software stack at every location. When one edge misbehaves we replace it rather
+          than nurse it, which keeps the failure domain small.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Offices</h2>
+    <p class="sub">Registered locations, not sales floors.</p>
+    <div class="grid three">
+      <div class="card pad">
+        <h3>Amsterdam</h3>
+        <p class="small">EU operations and network engineering.<br>Keienbergweg 22, 1101 GC</p>
+      </div>
+      <div class="card pad">
+        <h3>Warsaw</h3>
+        <p class="small">CIS peering and carrier relations.<br>Prosta 51, 00-838</p>
+      </div>
+      <div class="card pad">
+        <h3>Singapore</h3>
+        <p class="small">APAC operations.<br>1 Raffles Place, 048616</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="contact">
+  <div class="wrap">
+    <div class="grid two">
+      <div class="card pad">
+        <h2>Contact</h2>
+        <p class="sub">Sales, abuse and technical questions all land in the same queue.</p>
+        <form id="contact" novalidate>
+          <label class="f" for="cname">Your name</label>
+          <input class="f" id="cname" name="name" type="text" autocomplete="name" placeholder="Jane Doe">
+
+          <label class="f" for="cmail">Work email</label>
+          <input class="f" id="cmail" name="email" type="email" autocomplete="email" placeholder="jane@company.com">
+
+          <label class="f" for="ctopic">Topic</label>
+          <select class="f" id="ctopic" name="topic">
+            <option>Technical question</option>
+            <option>Sales and volume pricing</option>
+            <option>Abuse report</option>
+            <option>Something else</option>
+          </select>
+
+          <label class="f" for="cmsg">Message</label>
+          <textarea class="f" id="cmsg" name="message" rows="4" placeholder="Tell us what you are building."></textarea>
+
+          <p class="mt"><button class="btn primary" type="submit">Send message</button></p>
+          <p class="small" id="contactNote" role="status"></p>
+        </form>
+      </div>
+
+      <div>
+        <div class="card pad" style="margin-bottom:16px">
+          <h3>Direct</h3>
+          <table>
+            <tbody>
+              <tr><td>Operations</td><td class="num">noc@mediaflow.example</td></tr>
+              <tr><td>Abuse</td><td class="num">abuse@mediaflow.example</td></tr>
+              <tr><td>Security</td><td class="num">security@mediaflow.example</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="card pad">
+          <h3>Response times</h3>
+          <table>
+            <tbody>
+              <tr><td>Growth plans</td><td class="num">1 business day</td></tr>
+              <tr><td>Scale plans</td><td class="num">1 hour, 24/7</td></tr>
+              <tr><td>Abuse reports</td><td class="num">4 hours</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="terms">
+  <div class="wrap">
+    <h2>Terms and privacy</h2>
+    <p class="sub">Short version, in plain language.</p>
+    <div class="grid two">
+      <div class="card pad">
+        <h3>Service terms</h3>
+        <p class="small">
+          The gateway is provided on a best-effort basis on Starter and with a 99.99% delivery
+          SLA on Scale. We may throttle or suspend accounts used for anything other than
+          delivering media, including bulk file distribution and command-and-control traffic.
+        </p>
+      </div>
+      <div class="card pad">
+        <h3>Data handling</h3>
+        <p class="small">
+          Request logs contain the requested path, the edge that served it, cache state and
+          timing. They do not contain request bodies. Logs are deleted at the end of the
+          retention window for your plan.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="cols">
+      <div><h4>Product</h4><ul>
+        <li><a href="platform.html">Platform</a></li>
+        <li><a href="pricing.html">Pricing</a></li>
+        <li><a href="status.html">Status</a></li></ul></div>
+      <div><h4>Developers</h4><ul>
+        <li><a href="docs.html">Documentation</a></li>
+        <li><a href="docs.html#api">API reference</a></li>
+        <li><a href="docs.html#quickstart">Quickstart</a></li></ul></div>
+      <div><h4>Company</h4><ul>
+        <li><a href="about.html">About</a></li>
+        <li><a href="about.html#contact">Contact</a></li></ul></div>
+      <div><h4>Legal</h4><ul>
+        <li><a href="about.html#terms">Terms of service</a></li>
+        <li><a href="about.html#terms">Privacy policy</a></li></ul></div>
+    </div>
+    <div class="base">
+      <span>© <span data-year>2026</span> MediaFlow Gateway</span>
+      <span class="r" id="edge">edge: gateway</span>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/app.js"></script>
+</body>
+</html>

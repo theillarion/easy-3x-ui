@@ -1,0 +1,30 @@
+{
+  "enable": true,
+  "remark": "TCP REALITY",
+  "protocol": "vless",
+  "settings": {
+    "decryption": "none",
+    "encryption": "none"
+  },
+  "sniffing": {
+    "enabled": false
+  },
+  "streamSettings": {
+    "network": "tcp",
+    "security": "reality",
+    "tcpSettings": {
+      "acceptProxyProtocol": false,
+      "header": {
+        "type": "none"
+      }
+    },
+    "realitySettings": {
+      "show": false,
+      "xver": 0,
+      "settings": {
+        "fingerprint": "chrome",
+        "spiderX": "/"
+      }
+    }
+  }
+}

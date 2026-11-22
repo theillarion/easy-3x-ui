@@ -1,0 +1,272 @@
+"""Load and validate the installer YAML configuration."""
+
+from __future__ import annotations
+
+import re
+import secrets
+import sys
+from collections.abc import Hashable, Iterable, Mapping
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from yaml.nodes import MappingNode
+
+
+DEFAULTS = {
+    "https": "certbot",
+    "install_dir": "/opt/3x-ui",
+    "panel_port": 2053,
+    "subscription_port": 2096,
+    "reality": False,
+    "direct_xhttp": False,
+    "reality_port": 443,
+    "reality_backend_port": 8444,
+    "direct_xhttp_port": 8443,
+    "direct_xhttp_path": "/",
+}
+OPTIONAL_FIELDS = {
+    "domain",
+    "panel_domain",
+    "subscription_domain",
+    "email",
+    "origin_domain",
+    "docker_user",
+    "cdn",
+    "admin_username",
+    "admin_password",
+    "reality_sni",
+    "reality_address",
+    "reality_target",
+    "reality_tag",
+    "direct_xhttp_tag",
+    "inbound_templates",
+}
+INBOUND_TEMPLATES = {"reality", "direct_xhttp", "selectel", "yandex"}
+CDN_FIELDS = {"provider", "edge", "path", "port", "remark", "origin", "tag"}
+AUTH_FIELDS = {"admin_username", "admin_password"}
+RUN_FIELDS = {"action", "backup_file", "confirm"}
+XHTTP_EXAMPLE = "/media/hls/9636f214/index.m3u8"
+DOMAIN = re.compile(
+    r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?",
+    re.ASCII | re.IGNORECASE,
+)
+
+
+def _load_yaml(path: Path) -> object:
+    try:
+        import yaml
+    except ModuleNotFoundError as exc:
+        if exc.name != "yaml":
+            raise
+        raise ValueError("Install python3-yaml to read config files.") from exc
+
+    class ConfigLoader(yaml.SafeLoader):
+        def construct_mapping(self, node: MappingNode, deep: bool = False) -> dict[Hashable, Any]:
+            seen: set[str] = set()
+            for key_node, _ in node.value:
+                key = self.construct_object(key_node, deep=deep)
+                line = key_node.start_mark.line + 1
+                if not isinstance(key, str):
+                    raise ValueError(f"Expected a field name at line {line}.")
+                if key in seen:
+                    raise ValueError(f"Duplicate field {key!r} at line {line}.")
+                seen.add(key)
+            return super().construct_mapping(node, deep=deep)
+
+    try:
+        return yaml.load(path.read_text(encoding="utf-8"), Loader=ConfigLoader)
+    except yaml.YAMLError as exc:
+        mark = getattr(exc, "problem_mark", None)
+        location = f" at line {mark.line + 1}" if mark else ""
+        raise ValueError(f"Invalid YAML{location}.") from None
+
+
+def read_config(path: Path, force: bool) -> dict[str, Any]:
+    """Load setup YAML, apply defaults, and validate its fields."""
+    return validate_config(_load_yaml(path), force)
+
+
+def validate_config(raw: object, force: bool = False) -> dict[str, Any]:
+    """Apply defaults and validate the loaded configuration."""
+    if not isinstance(raw, dict):
+        raise ValueError("The YAML config must be a mapping.")
+    _run_options(raw)
+    source = {key: value for key, value in raw.items() if key not in RUN_FIELDS}
+    config = DEFAULTS | _clean_fields(source, DEFAULTS.keys() | OPTIONAL_FIELDS, "config", force)
+    config.setdefault("cdn", [])
+    if config["https"] not in ("certbot", "caddy"):
+        raise ValueError("https must be certbot or caddy.")
+    if not isinstance(config["install_dir"], str) or not Path(config["install_dir"]).is_absolute():
+        raise ValueError("install_dir must be an absolute path.")
+    if "docker_user" in config:
+        user = config["docker_user"]
+        if not isinstance(user, str) or user == "root" or not re.fullmatch(r"[a-z_][a-z0-9_.-]*", user, re.I):
+            raise ValueError("docker_user must be a regular Linux user.")
+    for field in AUTH_FIELDS | {"reality_tag", "direct_xhttp_tag"}:
+        if field in config:
+            value = config[field]
+            if not isinstance(value, str) or not value.strip() or any(c in value for c in "\0\r\n"):
+                raise ValueError(f"{field} must be a non-empty string.")
+    for field in ("reality", "direct_xhttp"):
+        if type(config[field]) is not bool:
+            raise ValueError(f"{field} must be true or false.")
+    if "inbound_templates" in config:
+        templates = config["inbound_templates"]
+        if not isinstance(templates, dict):
+            raise ValueError("inbound_templates must be a mapping.")
+        templates = _clean_fields(templates, INBOUND_TEMPLATES, "inbound_templates", force)
+        for name, path in templates.items():
+            if not isinstance(path, str) or "\0" in path or not Path(path).is_absolute():
+                raise ValueError(f"inbound_templates.{name} must be an absolute path.")
+        config["inbound_templates"] = templates
+    if "domain" in config:
+        domain = _hostname(config["domain"], "domain")
+        config.setdefault("panel_domain", f"master.{domain}")
+        config.setdefault("subscription_domain", f"gateway.{domain}")
+        config.setdefault("origin_domain", f"node.{domain}")
+    for field in ("panel_domain", "subscription_domain"):
+        config[field] = _hostname(config.get(field), field)
+    if config["panel_domain"] == config["subscription_domain"]:
+        raise ValueError("Panel and subscription domains must be different.")
+    email = config.get("email")
+    if not isinstance(email, str) or not re.fullmatch(r"[A-Za-z0-9_.+%-]+@[A-Za-z0-9.-]+\.[A-Za-z0-9-]+", email):
+        raise ValueError("email must be a valid ACME contact email.")
+    if not isinstance(config["cdn"], list):
+        raise ValueError("cdn must be a list.")
+    if config["cdn"] and config["https"] != "caddy":
+        raise ValueError("CDN backends require Caddy.")
+    config["cdn"] = _read_cdns(config, force)
+    names = config.get("reality_sni", ["www.cloudflare.com"])
+    if not isinstance(names, list) or not names:
+        raise ValueError("reality_sni must be a non-empty list of domain names.")
+    sni_names = list(dict.fromkeys(_hostname(name, "reality_sni") for name in names))
+    config["reality_sni"] = sni_names
+    if config["https"] == "caddy" and config["reality"]:
+        web_names = {config["panel_domain"], config["subscription_domain"]}
+        web_names.update(backend["origin"] for backend in config["cdn"])
+        if web_names.intersection(sni_names):
+            raise ValueError("REALITY SNI names must differ from the Caddy site names.")
+    path = config["direct_xhttp_path"]
+    if path == "generate":
+        path = f"/media/hls/{secrets.token_hex(4)}/index.m3u8"
+    if not isinstance(path, str) or (path != "/" and not _valid_route(path)):
+        raise ValueError("direct_xhttp_path must be an absolute URL path with no query string.")
+    config["direct_xhttp_path"] = path
+    if "reality_target" in config:
+        target = config["reality_target"]
+        if not isinstance(target, str) or ":" not in target:
+            raise ValueError("reality_target must be a domain and port.")
+        host, _, port = target.rpartition(":")
+        if not port.isdecimal() or not 1 <= int(port) <= 65535:
+            raise ValueError("reality_target must use a valid port.")
+        config["reality_target"] = f"{_hostname(host, 'reality_target')}:{port}"
+    if config["reality"] and config["https"] == "caddy":
+        config["reality_address"] = _hostname(config.get("reality_address", config.get("domain")), "reality_address")
+    port_plan(config)
+    return config
+
+
+def _run_options(raw: Mapping[str, Any]) -> tuple[str, Path | None, bool]:
+    """Read one-time YAML options without adding them to the saved config."""
+    action = raw.get("action", "install")
+    if action not in ("install", "restore", "reset"):
+        raise ValueError("YAML action must be install, restore, or reset.")
+    confirmed = raw.get("confirm", False)
+    if type(confirmed) is not bool:
+        raise ValueError("confirm must be true or false.")
+    source = raw.get("backup_file")
+    if source is not None and (not isinstance(source, str) or not Path(source).is_absolute()):
+        raise ValueError("backup_file must be an absolute path.")
+    if source and action == "reset":
+        raise ValueError("Use restore instead of reset with a backup file.")
+    return action, Path(source) if source else None, confirmed
+
+
+def _clean_fields(data: Mapping[str, Any], allowed: Iterable[str], label: str, force: bool) -> dict[str, Any]:
+    unknown = data.keys() - allowed
+    if unknown:
+        names = ", ".join(sorted(map(str, unknown)))
+        if not force:
+            raise ValueError(f"Unknown {label} fields: {names}.")
+        print(f"Ignoring unknown {label} fields: {names}.", file=sys.stderr)
+    return {key: value for key, value in data.items() if key in allowed}
+
+
+def _hostname(value: object, field: str) -> str:
+    if not isinstance(value, str) or not DOMAIN.fullmatch(value):
+        raise ValueError(f"{field} must be a domain name.")
+    return value.lower()
+
+
+def _valid_route(path: str) -> bool:
+    return bool(
+        re.fullmatch(r"/[A-Za-z0-9_.~-]+(?:/[A-Za-z0-9_.~-]+)*", path)
+        and all(segment not in (".", "..") for segment in path.split("/"))
+    )
+
+
+def _read_cdns(config: Mapping[str, Any], force: bool) -> list[dict[str, Any]]:
+    cdns: list[dict[str, Any]] = []
+    for i, source in enumerate(config["cdn"]):
+        label = f"cdn[{i}]"
+        if not isinstance(source, dict):
+            raise ValueError(f"{label} must be a mapping.")
+        cdn = _clean_fields(source, CDN_FIELDS, label, force)
+        if cdn.get("provider") not in ("selectel", "yandex"):
+            raise ValueError(f"{label}.provider must be selectel or yandex.")
+        for field in ("tag", "remark"):
+            if field in cdn and (not isinstance(cdn[field], str) or not cdn[field].strip()):
+                raise ValueError(f"{label}.{field} must be a non-empty string.")
+        cdn["edge"] = _hostname(cdn.get("edge"), f"{label}.edge")
+        cdn["origin"] = _hostname(cdn.get("origin", config.get("origin_domain")), f"{label}.origin")
+        if cdn["origin"] in (config["panel_domain"], config["subscription_domain"]):
+            raise ValueError(f"{label}.origin must differ from the panel and subscription domains.")
+        cdn.setdefault("port", 8080 + i)
+        cdn.setdefault("path", XHTTP_EXAMPLE)
+        if cdn["path"] == "generate":
+            cdn["path"] = f"/media/hls/{secrets.token_hex(4)}/index.m3u8"
+        path = cdn["path"]
+        if not isinstance(path, str) or not _valid_route(path):
+            raise ValueError(f"{label}.path must be an absolute URL path with no query string.")
+        for other in cdns:
+            if other["origin"] == cdn["origin"] and (
+                path == other["path"] or path.startswith(other["path"] + "/") or other["path"].startswith(path + "/")
+            ):
+                raise ValueError(f"{label}.path overlaps with {other['path']} on {cdn['origin']}.")
+        cdns.append(cdn)
+    return cdns
+
+
+def port_plan(config: Mapping[str, Any]) -> dict[str, int]:
+    """Assign the ports needed by setup and reject duplicate assignments."""
+    caddy = config["https"] == "caddy"
+    ports = {"ACME HTTP": 80, "Panel": config["panel_port"], "Subscriptions": config["subscription_port"]}
+    if caddy:
+        ports["Caddy HTTPS"] = 443
+    if config["reality"]:
+        ports["TCP REALITY"] = config["reality_backend_port" if caddy else "reality_port"]
+    if config["direct_xhttp"]:
+        ports["Direct XHTTP REALITY"] = config["direct_xhttp_port"]
+    ports.update({f"CDN {i + 1} backend": cdn["port"] for i, cdn in enumerate(config["cdn"])})
+    owners: dict[int, str] = {}
+    for label, port in ports.items():
+        if type(port) is not int or not 1 <= port <= 65535:
+            raise ValueError(f"{label} requires a port from 1 to 65535.")
+        if port in owners:
+            raise ValueError(f"Port {port} is assigned to {owners[port]} and {label}.")
+        owners[port] = label
+    return ports
+
+
+def use_saved_paths(raw: object, current: Mapping[str, Any], config: dict[str, Any]) -> None:
+    """Reuse a generated path when the same YAML is applied again."""
+    if not isinstance(raw, dict):
+        return
+    if raw.get("direct_xhttp_path") == "generate" and current["direct_xhttp"]:
+        config["direct_xhttp_path"] = current["direct_xhttp_path"]
+    saved_ports = {backend["port"]: backend for backend in current["cdn"]}
+    for backend, source in zip(config["cdn"], raw.get("cdn", []), strict=True):
+        old = saved_ports.get(backend["port"])
+        if source.get("path") == "generate" and old and old["provider"] == backend["provider"]:
+            backend["path"] = old["path"]

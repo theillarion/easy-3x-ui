@@ -1,0 +1,31 @@
+__pycache__/
+.mypy_cache/
+.ruff_cache/
+*.pyc
+coverage-report/
+.coverage
+.coverage.*
+
+# Local workspace
+/.obsidian/
+/.codegraph/
+/drafts/
+/decisions.md
+/implementation-audit.md
+.DS_Store
+
+# Local setup files and backups
+/config.yml
+/config.yaml
+.env
+.env.*
+backups/
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite
+*.sqlite3
+*.pem
+*.key
+*.log
