@@ -7,7 +7,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from setup3ui.config import (
     AUTH_FIELDS,
@@ -21,6 +21,9 @@ from setup3ui.config import (
     use_saved_paths,
     validate_config,
 )
+
+if TYPE_CHECKING:
+    from setup3ui.install_draft import Draft
 
 
 def backup_defaults(source: Path) -> dict[str, Any]:
@@ -103,12 +106,197 @@ def change_reality_sni(directory: Path) -> None:
         apply_config(directory, current, validate_config(current | selected), {}, interactive=True)
 
 
-def deploy_when_requested() -> None:
+def deploy_when_requested(*, required: bool = False) -> None:
     """Install the CLI when run through the package launcher."""
-    if os.environ.get("SETUP_3X_UI_DEPLOY_CLI") == "1":
+    if required or os.environ.get("SETUP_3X_UI_DEPLOY_CLI") == "1":
         from setup3ui.deploy.release import deploy_cli
 
         deploy_cli(Path(__file__).resolve().parents[1])
+
+
+def _managed_installation(default: Path) -> Path | None:
+    from setup3ui.deploy.managed import managed_directory
+    from setup3ui.panel.discovery import discover_panels
+
+    if (default / "config.yml").is_file():
+        return default
+    for panel in discover_panels():
+        if (
+            not panel["rootless"] and panel["project"] == "3x-ui"
+            and panel["service"] == "panel" and panel["compose_dir"]
+        ):
+            try:
+                return managed_directory(Path(panel["compose_dir"]))
+            except (OSError, ValueError):
+                continue
+    return None
+
+
+def _install_summary(config: dict[str, Any]) -> None:
+    summary = {
+        "install_dir": config["install_dir"],
+        "https": config["https"],
+        "panel": config["panel_domain"],
+        "subscription": config["subscription_domain"],
+        "ports": port_plan(config),
+        "cdn": config["cdn"],
+    }
+    if config["direct_xhttp"]:
+        summary["direct_xhttp_path"] = config["direct_xhttp_path"]
+    if config["reality"] or config["direct_xhttp"]:
+        names = config["reality_sni"]
+        summary.update(reality_sni=names, reality_target=config.get("reality_target", f"{names[0]}:443"))
+    print(json.dumps(summary, indent=2))
+
+
+def _interactive_install(args: argparse.Namespace, *, menu: bool, explicit_directory: bool) -> list[str]:
+    from setup3ui.deploy.install import fresh_install_directory, install
+    from setup3ui.deploy.managed import managed_directory, operation_lock
+    from setup3ui.install_draft import Draft, InvalidDraft, draft_lock
+    from setup3ui.interactive import Questions, ask_config, ask_reality_sni
+
+    if explicit_directory and not args.install_dir.is_absolute():
+        raise ValueError("Enter an absolute installation directory.")
+    with draft_lock() as path:
+        try:
+            draft = Draft.load(path)
+        except InvalidDraft as exc:
+            print(exc)
+            if input("Start over and discard the unreadable draft? [y/N] ").strip().lower() not in {"y", "yes"}:
+                return []
+            path.unlink()
+            draft = None
+        if draft is not None:
+            while True:
+                choice = input("Continue the unfinished installation or start over? [continue]: ").strip().lower()
+                if choice in {"", "continue"}:
+                    break
+                if choice == "start over":
+                    path.unlink()
+                    draft = None
+                    break
+                print("Enter continue or start over.")
+        if draft is None:
+            if menu:
+                directory = _managed_installation(args.install_dir)
+                if directory is not None:
+                    commands = ("status", "backup", "restore", "reality-sni", "update", "test", "reset", "uninstall")
+                    print(f"Manage 3x-ui. Commands: {', '.join(commands)}.")
+                    action = input("Command [status]: ").strip() or "status"
+                    if action not in commands:
+                        raise ValueError("Choose one of the listed commands.")
+                    return [action, "--install-dir", str(directory)]
+            action = "restore" if args.backup_source else "install"
+            if menu:
+                while True:
+                    action = input(
+                        "Start a fresh install, restore a backup, or discover/adopt an existing panel [install]: "
+                    ).strip().lower() or "install"
+                    if action in {"discover", "adopt"}:
+                        return [action]
+                    if action in {"install", "restore"}:
+                        break
+                    print("Choose install, restore, discover, or adopt.")
+            draft = Draft(path, {"action": action})
+            draft.save()
+
+        answers = draft.answers
+        if (
+            explicit_directory and "install_dir" in answers
+            and args.install_dir.resolve() != Path(answers["install_dir"])
+        ):
+            raise ValueError("The draft uses a different installation directory. Choose start over to change it.")
+        if args.backup_source and (
+            answers["action"] != "restore"
+            or ("backup_source" in answers and args.backup_source.resolve() != Path(answers["backup_source"]))
+        ):
+            raise ValueError("The draft uses a different backup source. Choose start over to change it.")
+        if draft.panel_installed:
+            with operation_lock():
+                managed_directory(Path(answers["install_dir"]))
+                print("The panel is installed. Finishing CLI installation.")
+                deploy_when_requested(required=True)
+                path.unlink()
+            return []
+
+        questions = Questions(draft)
+        if "install_dir" in answers:
+            directory = str(fresh_install_directory(Path(answers["install_dir"])))
+        elif explicit_directory:
+            directory = str(fresh_install_directory(args.install_dir))
+            answers["install_dir"] = directory
+            draft.save()
+        else:
+            directory = questions.value(
+                "install_dir", "Installation directory", str(args.install_dir),
+                lambda value: str(fresh_install_directory(Path(value))),
+            )
+        source = None
+        defaults: dict[str, Any] = {}
+        if answers["action"] == "restore":
+            source, defaults = _interactive_backup(draft, args.backup_source)
+
+        while True:
+            raw = ask_config(defaults, choose_sni=False, questions=questions)
+            choose_sni = source is None and (raw["reality"] or raw["direct_xhttp"])
+            try:
+                config = validate_config(raw | {"install_dir": directory}, pending_sni=choose_sni)
+            except ValueError as exc:
+                print(f"Error: {exc}", file=sys.stderr)
+                if input("Review your answers? [Y/n] ").strip().lower() not in {"", "y", "yes"}:
+                    return []
+                draft.review()
+                continue
+            break
+        if choose_sni:
+            config.update(ask_reality_sni(config, questions=questions))
+            config = validate_config(config)
+        _install_summary(config)
+        if input(f"Install with {config['https']}? [y/N] ").strip().lower() not in {"y", "yes"}:
+            print("Install cancelled. Your answers are saved.")
+            return []
+        with operation_lock():
+            install(config, port_plan(config), source=source, interactive=True)
+            if os.environ.get("SETUP_3X_UI_DEPLOY_CLI") == "1":
+                draft.panel_installed = True
+                draft.save()
+                deploy_when_requested()
+            path.unlink()
+    return []
+
+
+def _interactive_backup(draft: "Draft", explicit_source: Path | None) -> tuple[Path, dict[str, Any]]:
+    from setup3ui.interactive import Questions
+    from setup3ui.panel.restore import backup_file
+
+    def read(value: str) -> Path:
+        if not value:
+            raise ValueError("Enter the path to a backup database or backup directory.")
+        try:
+            source = Path(value).resolve()
+            backup_file(source)
+        except (OSError, RuntimeError) as exc:
+            raise ValueError(f"Could not check the backup path {value}: {exc}") from exc
+        return source
+
+    questions = Questions(draft)
+    if explicit_source and "backup_source" not in draft.answers:
+        source = read(str(explicit_source))
+        defaults = backup_defaults(source)
+        draft.answers["backup_source"] = str(source)
+        draft.save()
+        return source, defaults
+    while True:
+        source = Path(questions.value(
+            "backup_source", "Backup database path", validate=lambda value: str(read(value)),
+        ))
+        try:
+            backup_file(source)
+            return source, backup_defaults(source)
+        except (OSError, ValueError) as exc:
+            print(exc)
+            draft.previous["backup_source"] = draft.answers.pop("backup_source")
+            draft.save()
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -162,30 +350,15 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--force", action="store_true", help="Ignore unknown YAML fields.")
     raw_args = sys.argv[1:] if argv is None else argv
     args = parser.parse_args(raw_args)
-    if not raw_args and sys.stdin.isatty():
-        directory = Path(str(DEFAULTS["install_dir"]))
-        if (directory / "config.yml").is_file():
-            commands = ("status", "backup", "restore", "reality-sni", "update", "test", "reset", "uninstall")
-            print(f"Manage 3x-ui. Commands: {', '.join(commands)}.")
-            action = input("Command [status]: ").strip() or "status"
-            if action not in commands:
-                parser.error("Choose one of the listed commands.")
-            main([action])
-            return
-        action = (
-            input("Start a fresh install, restore a backup, or discover/adopt an existing panel [install]: ")
-            .strip()
-            .lower()
-        )
-        if action in ("discover", "adopt"):
-            main([action])
-            return
-        if action == "restore":
-            main(["install", "--from", input("Backup database path: ").strip()])
-            return
-        if action not in ("", "install"):
-            parser.error("Choose install, restore, discover, or adopt.")
     try:
+        explicit_directory = any(arg == "--install-dir" or arg.startswith("--install-dir=") for arg in raw_args)
+        if args.action == "install" and args.config is None and sys.stdin.isatty():
+            if args.docker_user:
+                parser.error("--docker-user requires prepare-docker.")
+            followup = _interactive_install(args, menu=not raw_args, explicit_directory=explicit_directory)
+            if followup:
+                main(followup)
+            return
         if args.action == "reality-sni":
             if args.config or not sys.stdin.isatty():
                 raise ValueError("Run reality-sni in a terminal, or use install --config for YAML.")
@@ -204,7 +377,7 @@ def main(argv: list[str] | None = None) -> None:
             if (
                 action in ("restore", "reset")
                 and "install_dir" in raw
-                and not any(arg == "--install-dir" or arg.startswith("--install-dir=") for arg in raw_args)
+                and not explicit_directory
             ):
                 directory = raw["install_dir"]
                 if not isinstance(directory, str) or not Path(directory).is_absolute():
@@ -307,7 +480,7 @@ def main(argv: list[str] | None = None) -> None:
                 with operation_lock():
                     uninstall(directory, purge=args.purge_data)
             return
-        if args.config is None and (args.action not in ("install", "adopt") or not sys.stdin.isatty()):
+        if args.config is None and (args.action != "adopt" or not sys.stdin.isatty()):
             parser.error(f"{args.action} requires --config.")
         if args.docker_user:
             parser.error("--docker-user requires prepare-docker.")
@@ -315,19 +488,8 @@ def main(argv: list[str] | None = None) -> None:
         if args.config is None:
             from setup3ui.interactive import ask_config
 
-            choose_sni = args.action == "install" and args.backup_source is None
-            config = validate_config(ask_config(defaults, choose_sni=choose_sni))
-            summary = {
-                "https": config["https"],
-                "panel": config["panel_domain"],
-                "subscription": config["subscription_domain"],
-                "ports": port_plan(config),
-                "cdn": config["cdn"],
-            }
-            if config["reality"] or config["direct_xhttp"]:
-                names = config["reality_sni"]
-                summary.update(reality_sni=names, reality_target=config.get("reality_target", f"{names[0]}:443"))
-            print(json.dumps(summary, indent=2))
+            config = validate_config(ask_config(choose_sni=False))
+            _install_summary(config)
             if input(f"Install with {config['https']}? [y/N] ").strip().lower() not in {"y", "yes"}:
                 print("Install cancelled.")
                 return
@@ -457,7 +619,7 @@ def main(argv: list[str] | None = None) -> None:
         if "docker_user" in config:
             preview["docker_user"] = config["docker_user"]
         print(json.dumps(preview, indent=2))
-    except (OSError, ValueError, subprocess.CalledProcessError, KeyboardInterrupt) as exc:
+    except (OSError, ValueError, subprocess.CalledProcessError) as exc:
         parser.exit(1, f"Error: {exc}\n")
 
 
@@ -465,6 +627,9 @@ def entrypoint() -> None:
     """Run the CLI and handle terminal cancellation."""
     try:
         main()
-    except (KeyboardInterrupt, EOFError):
+    except KeyboardInterrupt:
+        print("Interrupted.", file=sys.stderr)
+        sys.exit(130)
+    except EOFError:
         print("Cancelled.", file=sys.stderr)
         sys.exit(1)

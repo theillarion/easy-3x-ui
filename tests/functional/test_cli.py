@@ -1,18 +1,26 @@
 """Exercise the public shell entry points in the Debian sandbox."""
 
+import errno
 import functools
 import hashlib
 import json
 import os
+import pty
+import select
 import shutil
+import signal
 import ssl
+import stat
 import subprocess
 import tarfile
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from textwrap import dedent
 from threading import Thread
+from time import monotonic
 from unittest import TestCase
 
 import yaml
@@ -74,6 +82,143 @@ class CliTests(TestCase):
         result = self.run_cli(ROOT / "install.sh", "validate")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)["https"], "certbot")
+
+    @contextmanager
+    def install_terminal(
+        self, directory: Path, env: dict[str, str],
+    ) -> Iterator[tuple[Callable[[str, str | None], None], Callable[[int], str]]]:
+        pid, terminal = pty.fork()
+        if pid == 0:
+            os.chdir(directory)
+            os.execve(ROOT / "install.sh", [str(ROOT / "install.sh")], env)
+
+        output = bytearray()
+        reaped = False
+
+        def read() -> bool:
+            if not select.select([terminal], [], [], 10)[0]:
+                self.fail(f"Installer stopped responding: {output.decode(errors='replace')}")
+            try:
+                chunk = os.read(terminal, 4096)
+            except OSError as exc:
+                # Linux reports EIO when the final process closes the peer terminal.
+                if exc.errno != errno.EIO:
+                    raise
+                return False
+            output.extend(chunk)
+            return bool(chunk)
+
+        def expect(prompt: str, answer: str | None = None) -> None:
+            deadline = monotonic() + 15
+            while prompt.encode() not in output:
+                if monotonic() >= deadline or not read():
+                    self.fail(f"Missing prompt {prompt!r}: {output.decode(errors='replace')}")
+            if answer is not None:
+                os.write(terminal, answer.encode())
+
+        def finish(code: int) -> str:
+            nonlocal reaped
+            while read():
+                pass
+            _, status = os.waitpid(pid, 0)
+            reaped = True
+            transcript = output.decode(errors="replace")
+            self.assertEqual(os.waitstatus_to_exitcode(status), code, transcript)
+            return transcript
+
+        try:
+            yield expect, finish
+        finally:
+            os.close(terminal)
+            if not reaped:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                os.waitpid(pid, 0)
+
+    def test_install_script_resumes_sni_after_ctrl_c_from_another_directory(self) -> None:
+        temporary = TemporaryDirectory(dir="/var/lib")
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        draft = root / "state" / "install-draft.json"
+        target = root / "custom-panel"
+        other = self.root / "other"
+        other.mkdir()
+        (self.root / "sitecustomize.py").write_text(dedent(f"""
+            from pathlib import Path
+            from setup3ui import install_draft, interactive
+            from setup3ui import cli
+            from setup3ui.deploy import install as deployment
+            from setup3ui.panel.bootstrap import credentials
+
+            install_draft.STATE_DIRECTORY = Path({str(draft.parent)!r})
+            cli._managed_installation = lambda default: None
+
+            def scan(*args):
+                print("fixture scan executed")
+                return ["second.example.net", "first.example.net"]
+
+            def fail_after_credentials(config, ports, *, source, interactive):
+                credentials(config, interactive=interactive)
+                raise ValueError("fixture deploy failure")
+
+            interactive.scan = scan
+            deployment.install = fail_after_credentials
+        """), encoding="utf-8")
+        env = os.environ | {"PYTHONPATH": f"{self.root}:{ROOT}", "SUDO_USER": "fixture"}
+
+        with self.install_terminal(self.root, env) as (expect, finish):
+            expect("existing panel [install]:", "\n")
+            expect("Installation directory [/opt/3x-ui]:", f"{root / 'missing' / 'panel'}\n")
+            expect("The installation parent directory does not exist", f"{target}\n")
+            expect("HTTPS with certbot or caddy", "caddy\n")
+            expect("Main domain:", "example.org\n")
+            expect("Panel domain", "\n")
+            expect("Subscription domain", "\n")
+            expect("ACME contact email:", "test@example.org\n")
+            expect("Panel port", "\n")
+            expect("Subscription port", "\n")
+            expect("Use TCP REALITY", "y\n")
+            expect("Use direct XHTTP REALITY", "y\n")
+            expect("TCP REALITY backend port", "\n")
+            expect("Direct XHTTP port", "\n")
+            expect("Direct XHTTP path, or generate", "generate\n")
+            expect("Add a CDN XHTTP backend", "n\n")
+            expect("Find REALITY SNI automatically?", "y\n")
+            expect("REALITY scan type", "top10\n")
+            expect("REALITY SNI number", "\x03")
+            self.assertIn("fixture scan executed", finish(130))
+
+        state = json.loads(draft.read_text())
+        self.assertEqual(state["answers"]["install_dir"], str(target))
+        self.assertEqual(stat.S_IMODE(draft.stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(draft.parent.stat().st_mode), 0o700)
+        self.assertEqual(draft.stat().st_uid, 0)
+        self.assertFalse(target.exists())
+
+        with self.install_terminal(other, env) as (expect, finish):
+            expect("Continue the unfinished installation or start over?", "continue\n")
+            expect("REALITY SNI number", "2\n")
+            expect("Install with caddy?", "y\n")
+            expect("Panel username:", "fixture-operator\n")
+            expect("Panel password:", "fixture-only-password\n")
+            output = finish(1)
+        self.assertIn("1. second.example.net\r\n2. first.example.net", output)
+        self.assertIn("first.example.net:443", output)
+        self.assertIn(state["answers"]["direct_xhttp_path"], output)
+        self.assertNotIn("fixture scan executed", output)
+        self.assertNotIn("HTTPS with certbot or caddy", output)
+        self.assertIn("fixture deploy failure", output)
+        self.assertNotIn("fixture-only-password", output)
+        self.assertNotIn("fixture-only-password", draft.read_text())
+        self.assertNotIn("fixture-operator", draft.read_text())
+
+        with self.install_terminal(other, env) as (expect, finish):
+            expect("Continue the unfinished installation or start over?", "start over\n")
+            expect("existing panel [install]:", "\x03")
+            finish(130)
+        self.assertFalse(draft.exists())
 
     def test_install_script_runs_from_https(self) -> None:
         self.assertEqual(os.geteuid(), 0, "Run these tests in the Debian sandbox.")

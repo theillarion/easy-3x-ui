@@ -108,8 +108,7 @@ def validate_config(raw: object, force: bool = False, *, pending_sni: bool = Fal
         raise ValueError("install_dir must be an absolute path.")
     if "docker_user" in config:
         user = config["docker_user"]
-        if not isinstance(user, str) or user == "root" or not re.fullmatch(r"[a-z_][a-z0-9_.-]*", user, re.I):
-            raise ValueError("docker_user must be a regular Linux user.")
+        validate_docker_user(user)
     for field in AUTH_FIELDS | {"reality_tag", "direct_xhttp_tag"}:
         if field in config:
             value = config[field]
@@ -136,9 +135,7 @@ def validate_config(raw: object, force: bool = False, *, pending_sni: bool = Fal
         config[field] = _hostname(config.get(field), field)
     if config["panel_domain"] == config["subscription_domain"]:
         raise ValueError("Panel and subscription domains must be different.")
-    email = config.get("email")
-    if not isinstance(email, str) or not re.fullmatch(r"[A-Za-z0-9_.+%-]+@[A-Za-z0-9.-]+\.[A-Za-z0-9-]+", email):
-        raise ValueError("email must be a valid ACME contact email.")
+    validate_email(config.get("email"))
     if not isinstance(config["cdn"], list):
         raise ValueError("cdn must be a list.")
     if config["cdn"] and config["https"] != "caddy":
@@ -156,11 +153,7 @@ def validate_config(raw: object, force: bool = False, *, pending_sni: bool = Fal
         if web_names.intersection(sni_names):
             raise ValueError("REALITY SNI names must differ from the Caddy site names.")
     path = config["direct_xhttp_path"]
-    if path == "generate":
-        path = f"/media/hls/{secrets.token_hex(4)}/index.m3u8"
-    if not isinstance(path, str) or (path != "/" and not _valid_route(path)):
-        raise ValueError("direct_xhttp_path must be an absolute URL path with no query string.")
-    config["direct_xhttp_path"] = path
+    config["direct_xhttp_path"] = xhttp_path(path, "direct_xhttp_path", allow_root=True)
     if "reality_target" in config:
         target = config["reality_target"]
         if not isinstance(target, str) or ":" not in target:
@@ -259,6 +252,29 @@ def _valid_route(path: str) -> bool:
     )
 
 
+def validate_email(value: object) -> str:
+    """Check the ACME contact email."""
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_.+%-]+@[A-Za-z0-9.-]+\.[A-Za-z0-9-]+", value):
+        raise ValueError("email must be a valid ACME contact email.")
+    return value
+
+
+def validate_docker_user(value: object) -> str:
+    """Check the name of a regular Linux user."""
+    if not isinstance(value, str) or value == "root" or not re.fullmatch(r"[a-z_][a-z0-9_.-]*", value, re.I):
+        raise ValueError("docker_user must be a regular Linux user.")
+    return value
+
+
+def xhttp_path(value: object, field: str, *, allow_root: bool = False) -> str:
+    """Resolve a generated path and check the XHTTP route syntax."""
+    if value == "generate":
+        value = f"/media/hls/{secrets.token_hex(4)}/index.m3u8"
+    if not isinstance(value, str) or not ((allow_root and value == "/") or _valid_route(value)):
+        raise ValueError(f"{field} must be an absolute URL path with no query string.")
+    return value
+
+
 def _read_cdns(config: Mapping[str, Any], force: bool) -> list[dict[str, Any]]:
     cdns: list[dict[str, Any]] = []
     for i, source in enumerate(config["cdn"]):
@@ -276,12 +292,7 @@ def _read_cdns(config: Mapping[str, Any], force: bool) -> list[dict[str, Any]]:
         if cdn["origin"] in (config["panel_domain"], config["subscription_domain"]):
             raise ValueError(f"{label}.origin must differ from the panel and subscription domains.")
         cdn.setdefault("port", 8080 + i)
-        cdn.setdefault("path", XHTTP_EXAMPLE)
-        if cdn["path"] == "generate":
-            cdn["path"] = f"/media/hls/{secrets.token_hex(4)}/index.m3u8"
-        path = cdn["path"]
-        if not isinstance(path, str) or not _valid_route(path):
-            raise ValueError(f"{label}.path must be an absolute URL path with no query string.")
+        path = cdn["path"] = xhttp_path(cdn.get("path", XHTTP_EXAMPLE), f"{label}.path")
         for other in cdns:
             if other["origin"] == cdn["origin"] and (
                 path == other["path"] or path.startswith(other["path"] + "/") or other["path"].startswith(path + "/")

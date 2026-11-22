@@ -27,6 +27,27 @@ from setup3ui.panel.inbounds import create_inbounds, default_reality_tag
 from setup3ui.panel.tls import _backup_database, configure_panel_tls
 
 
+def fresh_install_directory(path: Path) -> Path:
+    """Check that a new installation can use this directory."""
+    if not path.is_absolute():
+        raise ValueError("Enter an absolute installation directory.")
+    try:
+        directory = path.resolve()
+    except (OSError, RuntimeError) as exc:
+        raise ValueError(f"Could not resolve the installation directory {path}: {exc}") from exc
+    if path.is_symlink() or directory.exists():
+        raise ValueError(f"{path} already exists. Fresh install needs a new directory.")
+    if not re.fullmatch(r"/[A-Za-z0-9_./-]+", str(directory)):
+        raise ValueError("Use an install directory with only letters, digits, dots, underscores, and dashes.")
+    try:
+        check_root_owned_directory(directory.parent)
+    except FileNotFoundError as exc:
+        raise ValueError(f"The installation parent directory does not exist: {directory.parent}") from exc
+    except OSError as exc:
+        raise ValueError(f"Could not check the installation parent directory {directory.parent}: {exc}") from exc
+    return directory
+
+
 def install(
     config: Mapping[str, Any],
     ports: Mapping[str, int],
@@ -40,16 +61,11 @@ def install(
     if os.geteuid() != 0:
         raise ValueError("Run install with sudo.")
     use_caddy = config["https"] == "caddy"
-    directory = Path(config["install_dir"]).resolve()
-    if directory.exists():
-        raise ValueError(f"{directory} already exists. Fresh install needs a new directory.")
-    if not re.fullmatch(r"/[A-Za-z0-9_./-]+", str(directory)):
-        raise ValueError("Use an install directory with only letters, digits, dots, underscores, and dashes.")
+    directory = fresh_install_directory(Path(config["install_dir"]).resolve())
     existing = [panel for panel in discover_panels() if panel["running"]]
     if existing:
         show_panels(existing)
         raise ValueError("An existing panel is running. Use discover to find its database before moving it.")
-    check_root_owned_directory(directory.parent)
     if source:
         from setup3ui.panel.restore import backup_file, panel_paths, stage_database
 
