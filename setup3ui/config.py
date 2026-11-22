@@ -6,6 +6,7 @@ import re
 import secrets
 import sys
 from collections.abc import Hashable, Iterable, Mapping
+from ipaddress import IPv4Network
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -46,6 +47,10 @@ INBOUND_TEMPLATES = {"reality", "direct_xhttp", "selectel", "yandex"}
 CDN_FIELDS = {"provider", "edge", "path", "port", "remark", "origin", "tag"}
 AUTH_FIELDS = {"admin_username", "admin_password"}
 RUN_FIELDS = {"action", "backup_file", "confirm"}
+SNI_RUN_FIELDS = {
+    "reality_sni_auto", "reality_sni_scan", "reality_sni_scan_cidr",
+    "reality_sni_scan_timeout",
+}
 XHTTP_EXAMPLE = "/media/hls/9636f214/index.m3u8"
 DOMAIN = re.compile(
     r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?",
@@ -87,13 +92,15 @@ def read_config(path: Path, force: bool) -> dict[str, Any]:
     return validate_config(_load_yaml(path), force)
 
 
-def validate_config(raw: object, force: bool = False) -> dict[str, Any]:
+def validate_config(raw: object, force: bool = False, *, pending_sni: bool = False) -> dict[str, Any]:
     """Apply defaults and validate the loaded configuration."""
     if not isinstance(raw, dict):
         raise ValueError("The YAML config must be a mapping.")
     _run_options(raw)
     source = {key: value for key, value in raw.items() if key not in RUN_FIELDS}
-    config = DEFAULTS | _clean_fields(source, DEFAULTS.keys() | OPTIONAL_FIELDS, "config", force)
+    config = DEFAULTS | _clean_fields(
+        source, DEFAULTS.keys() | OPTIONAL_FIELDS | SNI_RUN_FIELDS, "config", force,
+    )
     config.setdefault("cdn", [])
     if config["https"] not in ("certbot", "caddy"):
         raise ValueError("https must be certbot or caddy.")
@@ -137,12 +144,13 @@ def validate_config(raw: object, force: bool = False) -> dict[str, Any]:
     if config["cdn"] and config["https"] != "caddy":
         raise ValueError("CDN backends require Caddy.")
     config["cdn"] = _read_cdns(config, force)
+    _validate_sni_options(config)
     names = config.get("reality_sni", ["www.cloudflare.com"])
     if not isinstance(names, list) or not names:
         raise ValueError("reality_sni must be a non-empty list of domain names.")
     sni_names = list(dict.fromkeys(_hostname(name, "reality_sni") for name in names))
     config["reality_sni"] = sni_names
-    if config["https"] == "caddy" and config["reality"]:
+    if not pending_sni and config.get("reality_sni_auto") is not True and config["https"] == "caddy" and config["reality"]:
         web_names = {config["panel_domain"], config["subscription_domain"]}
         web_names.update(backend["origin"] for backend in config["cdn"])
         if web_names.intersection(sni_names):
@@ -165,6 +173,51 @@ def validate_config(raw: object, force: bool = False) -> dict[str, Any]:
         config["reality_address"] = _hostname(config.get("reality_address", config.get("domain")), "reality_address")
     port_plan(config)
     return config
+
+
+def _validate_sni_options(config: dict[str, Any]) -> None:
+    if not SNI_RUN_FIELDS.intersection(config):
+        return
+    if not (config["reality"] or config["direct_xhttp"]):
+        raise ValueError("REALITY SNI options require TCP REALITY or direct XHTTP REALITY.")
+    auto = config.get("reality_sni_auto")
+    if type(auto) is not bool:
+        raise ValueError("reality_sni_auto must be true or false.")
+    if not auto:
+        if (SNI_RUN_FIELDS - {"reality_sni_auto"}).intersection(config):
+            raise ValueError("Scan settings require reality_sni_auto: true.")
+        if "reality_sni" not in config:
+            raise ValueError("Set reality_sni when reality_sni_auto is false.")
+        return
+    if "reality_target" in config:
+        raise ValueError("Remove reality_target when using automatic SNI selection.")
+    if "reality_sni" not in config:
+        raise ValueError("Set reality_sni with fallback names when using automatic SNI selection.")
+    mode = config.setdefault("reality_sni_scan", "top10")
+    if mode not in ("top10", "scanner"):
+        raise ValueError("reality_sni_scan must be top10 or scanner.")
+    if mode == "scanner":
+        _validate_scanner_options(config)
+    elif "reality_sni_scan_cidr" in config or "reality_sni_scan_timeout" in config:
+        raise ValueError("CIDR and timeout require reality_sni_scan: scanner.")
+
+
+def scanner_subnet(value: object) -> IPv4Network:
+    """Validate a scanner target and normalize its host bits."""
+    if not isinstance(value, str) or "/" not in value:
+        raise ValueError("Enter an IPv4 CIDR, such as 192.0.2.0/28.")
+    network = IPv4Network(value, strict=False)
+    if network.prefixlen == 32:
+        raise ValueError("Reality Scanner requires an IPv4 subnet wider than /32.")
+    return network
+
+
+def _validate_scanner_options(config: dict[str, Any]) -> None:
+    if "reality_sni_scan_cidr" in config:
+        config["reality_sni_scan_cidr"] = str(scanner_subnet(config["reality_sni_scan_cidr"]))
+    timeout = config.setdefault("reality_sni_scan_timeout", 30)
+    if type(timeout) is not int or timeout < 1:
+        raise ValueError("reality_sni_scan_timeout must be a positive integer.")
 
 
 def _run_options(raw: Mapping[str, Any]) -> tuple[str, Path | None, bool]:

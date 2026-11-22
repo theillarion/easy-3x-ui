@@ -196,6 +196,7 @@ class TransportTests(TestCase):
                 patch.dict(os.environ),
                 patch.object(os, "geteuid", return_value=0),
                 patch.object(setup, "prepare_docker"),
+                patch.object(setup, "grant_installation_access"),
                 patch.object(setup, "configure_panel_tls", configure),
                 patch.object(setup, "check_dns"),
                 patch.object(setup, "check_host"),
@@ -235,6 +236,18 @@ class TransportTests(TestCase):
                     )
                     direct = next(item for item in inbounds if item["port"] == 8443)
                     self.assertEqual(direct["remark"], "Custom XHTTP fixture")
+                    for inbound in (direct, next(item for item in inbounds if item["port"] == 8444)):
+                        stream = inbound["streamSettings"]
+                        if isinstance(stream, str):
+                            stream = json.loads(stream)
+                        reality = stream["realitySettings"]
+                        self.assertEqual(reality["serverNames"], ["reality.example.org"])
+                        self.assertEqual(reality["target"], "target.example.org:18445")
+                        self.assertEqual(reality["settings"]["serverName"], "reality.example.org")
+                    self.assertIn(
+                        "@reality tls sni reality.example.org",
+                        (directory / "caddy-config" / "Caddyfile").read_text(),
+                    )
                     cdn_tags = {
                         item["port"]: item["tag"]
                         for item in inbounds

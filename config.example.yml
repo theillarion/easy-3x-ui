@@ -8,6 +8,16 @@ email: admin@example.com
 https: caddy
 reality: true
 direct_xhttp: true
+# Uncomment this group to select a REALITY SNI when applying this file.
+# reality_sni_auto: true
+# reality_sni_scan: top10  # Or scanner to discover names in an IPv4 subnet.
+# reality_sni: [www.cloudflare.com, www.microsoft.com]  # Fallback order.
+# The following options are valid with scanner only.
+# reality_sni_scan_cidr: 192.0.2.0/28  # Defaults to the VPS subnet.
+# reality_sni_scan_timeout: 30
+# To use and check a manual name instead:
+# reality_sni_auto: false
+# reality_sni: [www.cloudflare.com]
 # inbound_templates:
 #   direct_xhttp: /etc/setup-3x-ui/templates/direct-xhttp.json
 cdn:

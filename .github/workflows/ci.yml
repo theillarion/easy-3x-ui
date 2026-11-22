@@ -16,7 +16,7 @@ defaults:
 
 jobs:
   tests:
-    name: Debian 12 and 13
+    name: Debian 13
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:

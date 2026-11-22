@@ -1,9 +1,8 @@
-ARG DEBIAN=bookworm
 FROM docker:28-dind AS docker_cli
 
-FROM debian:${DEBIAN}-slim
+FROM debian:trixie-slim
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl openssl python3 python3-coverage python3-yaml \
+    && apt-get install -y --no-install-recommends acl ca-certificates curl openssl python3 python3-coverage python3-yaml \
     && apt-get clean
 RUN site="$(python3 -c 'from pathlib import Path; import coverage; print(Path(coverage.__file__).resolve().parents[1])')" \
     && mkdir -p "$site" \

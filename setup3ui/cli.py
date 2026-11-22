@@ -13,6 +13,7 @@ from setup3ui.config import (
     AUTH_FIELDS,
     DEFAULTS,
     DOMAIN,
+    SNI_RUN_FIELDS,
     _load_yaml,
     _run_options,
     port_plan,
@@ -75,6 +76,33 @@ def restore(directory: Path, source: Path | None, confirmed: bool) -> None:
     print(f"Database restored. Previous database: {backup / 'x-ui.db'}")
 
 
+def change_reality_sni(directory: Path) -> None:
+    """Run SNI selection against a managed configuration and apply it on confirmation."""
+    from setup3ui.deploy.managed import managed_directory, operation_lock
+    from setup3ui.deploy.reconfigure import apply_config
+    from setup3ui.interactive import ask_reality_sni
+
+    directory = managed_directory(directory)
+    path = directory / "config.yml"
+    current = read_config(path, False)
+    if not (current["reality"] or current["direct_xhttp"]):
+        raise ValueError("Enable TCP REALITY or direct XHTTP REALITY first.")
+    selected = ask_reality_sni(current)
+    current_target = current.get("reality_target", f"{current['reality_sni'][0]}:443")
+    print(f"Current REALITY SNI: {', '.join(current['reality_sni'])}, target: {current_target}")
+    print(f"Proposed REALITY SNI: {', '.join(selected['reality_sni'])}, target: {selected['reality_target']}")
+    if current["reality_sni"] == selected["reality_sni"] and current_target == selected["reality_target"]:
+        print("Settings already match.")
+        return
+    if input("Apply these REALITY settings? [y/N] ").strip().lower() not in {"y", "yes"}:
+        print("REALITY settings unchanged.")
+        return
+    with operation_lock():
+        if read_config(path, False) != current:
+            raise ValueError("Settings changed during SNI selection. Run reality-sni again.")
+        apply_config(directory, current, validate_config(current | selected), {}, interactive=True)
+
+
 def deploy_when_requested() -> None:
     """Install the CLI when run through the package launcher."""
     if os.environ.get("SETUP_3X_UI_DEPLOY_CLI") == "1":
@@ -103,6 +131,7 @@ def main(argv: list[str] | None = None) -> None:
             "status",
             "backup",
             "restore",
+            "reality-sni",
             "discover",
             "adopt",
             "update",
@@ -136,9 +165,10 @@ def main(argv: list[str] | None = None) -> None:
     if not raw_args and sys.stdin.isatty():
         directory = Path(str(DEFAULTS["install_dir"]))
         if (directory / "config.yml").is_file():
-            print("Manage 3x-ui. Commands: status, backup, restore, update, test, reset, uninstall.")
+            commands = ("status", "backup", "restore", "reality-sni", "update", "test", "reset", "uninstall")
+            print(f"Manage 3x-ui. Commands: {', '.join(commands)}.")
             action = input("Command [status]: ").strip() or "status"
-            if action not in {"status", "backup", "restore", "update", "test", "reset", "uninstall"}:
+            if action not in commands:
                 parser.error("Choose one of the listed commands.")
             main([action])
             return
@@ -156,6 +186,11 @@ def main(argv: list[str] | None = None) -> None:
         if action not in ("", "install"):
             parser.error("Choose install, restore, discover, or adopt.")
     try:
+        if args.action == "reality-sni":
+            if args.config or not sys.stdin.isatty():
+                raise ValueError("Run reality-sni in a terminal, or use install --config for YAML.")
+            change_reality_sni(args.install_dir)
+            return
         if args.action == "install" and args.config:
             raw = _load_yaml(args.config)
             if not isinstance(raw, dict):
@@ -164,6 +199,8 @@ def main(argv: list[str] | None = None) -> None:
             args.action = action
             args.backup_source = args.backup_source or source
             args.yes = args.yes or confirmed
+            if (action != "install" or args.backup_source) and SNI_RUN_FIELDS.intersection(raw):
+                raise ValueError("Run REALITY SNI selection separately after restoring or resetting.")
             if (
                 action in ("restore", "reset")
                 and "install_dir" in raw
@@ -278,19 +315,19 @@ def main(argv: list[str] | None = None) -> None:
         if args.config is None:
             from setup3ui.interactive import ask_config
 
-            config = validate_config(ask_config(defaults))
-            print(
-                json.dumps(
-                    {
-                        "https": config["https"],
-                        "panel": config["panel_domain"],
-                        "subscription": config["subscription_domain"],
-                        "ports": port_plan(config),
-                        "cdn": config["cdn"],
-                    },
-                    indent=2,
-                )
-            )
+            choose_sni = args.action == "install" and args.backup_source is None
+            config = validate_config(ask_config(defaults, choose_sni=choose_sni))
+            summary = {
+                "https": config["https"],
+                "panel": config["panel_domain"],
+                "subscription": config["subscription_domain"],
+                "ports": port_plan(config),
+                "cdn": config["cdn"],
+            }
+            if config["reality"] or config["direct_xhttp"]:
+                names = config["reality_sni"]
+                summary.update(reality_sni=names, reality_target=config.get("reality_target", f"{names[0]}:443"))
+            print(json.dumps(summary, indent=2))
             if input(f"Install with {config['https']}? [y/N] ").strip().lower() not in {"y", "yes"}:
                 print("Install cancelled.")
                 return
@@ -301,6 +338,12 @@ def main(argv: list[str] | None = None) -> None:
             config = validate_config(defaults | raw, args.force)
         else:
             config = read_config(args.config, args.force)
+        if args.action == "adopt" and SNI_RUN_FIELDS.intersection(config):
+            raise ValueError("Run REALITY SNI selection separately after adoption.")
+        if args.action == "install" and SNI_RUN_FIELDS.intersection(config):
+            from setup3ui.host.reality import resolve_sni
+
+            config = resolve_sni(config)
         if args.action == "render-compose":
             from setup3ui.deploy.compose import render_compose
 
@@ -311,6 +354,8 @@ def main(argv: list[str] | None = None) -> None:
 
             if config["https"] != "caddy":
                 raise ValueError("render-caddy requires https: caddy.")
+            if config.get("reality_sni_auto"):
+                raise ValueError("Use a config with a resolved REALITY SNI to render Caddy.")
             print(render_caddy(config), end="")
             return
         if args.action == "issue-cert":

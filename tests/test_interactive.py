@@ -3,12 +3,12 @@
 import os
 from contextlib import redirect_stdout
 from io import StringIO
-from subprocess import CompletedProcess, TimeoutExpired
 from unittest import TestCase
 from unittest.mock import patch
 
 from setup3ui.config import validate_config
-from setup3ui.interactive import EXAMPLE, SNI_CHOICES, _sni_latency, ask_config
+from setup3ui.host.reality import Probe
+from setup3ui.interactive import EXAMPLE, ask_config, ask_reality_sni
 
 
 class InteractiveTests(TestCase):
@@ -25,12 +25,14 @@ class InteractiveTests(TestCase):
             "y",
             "",
             "4443",
-            "",
             "n",
+            "",
         ]
         with (
             patch.dict(os.environ, {}, clear=True),
             patch("builtins.input", side_effect=answers) as prompt,
+            patch("setup3ui.interactive.probe", return_value=Probe("www.cloudflare.com", 10)),
+            patch("setup3ui.host.reality._ping", return_value="unavailable"),
         ):
             result = validate_config(ask_config())
         self.assertEqual(result["https"], "certbot")
@@ -63,9 +65,6 @@ class InteractiveTests(TestCase):
             "",
             "",
             "generate",
-            "TLS.Example.org",
-            "y",
-            "OTHER.Example.org",
             "yes",
             "",
             "",
@@ -79,20 +78,23 @@ class InteractiveTests(TestCase):
             "",
             "generate",
             "n",
+            "y",
+            "top10",
+            "",
         ]
         with (
             patch.dict(os.environ, {"SUDO_USER": "fixture"}),
             patch("builtins.input", side_effect=answers) as prompt,
-            patch("setup3ui.interactive._sni_latency") as latency,
+            patch("setup3ui.interactive.scan", return_value=["other.example.org"]) as scan,
             patch(
                 "setup3ui.config.secrets.token_hex",
                 side_effect=["01020304", "05060708"],
             ),
         ):
             result = validate_config(ask_config(defaults))
-        latency.assert_called_once_with(("tls.example.org", *SNI_CHOICES))
+        self.assertEqual(scan.call_args.args[1], "top10")
         self.assertEqual(result["reality_sni"], ["other.example.org"])
-        self.assertEqual(result["reality_target"], "tls.example.org:443")
+        self.assertEqual(result["reality_target"], "other.example.org:443")
         self.assertEqual(result["reality_backend_port"], 8444)
         self.assertEqual([entry["port"] for entry in result["cdn"]], [8080, 8081])
         self.assertEqual(result["cdn"][0]["path"], EXAMPLE)
@@ -118,44 +120,74 @@ class InteractiveTests(TestCase):
         ):
             ask_config()
 
-    def test_sni_output_sorts_tls_timings_and_reports_ping(self) -> None:
-        fixture = [
-            CompletedProcess([], 0, "ALPN protocol: h2"),
-            CompletedProcess([], 0, "ALPN protocol: h2"),
-            CompletedProcess([], 0, "ALPN protocol: http/1.1"),
-            TimeoutExpired("openssl", 7),
-            CompletedProcess([], 0, "seq=1 time=12 ms"),
-            TimeoutExpired("ping", 3),
-        ]
-        output = StringIO()
+
+    def test_manual_failure_offers_alternatives_and_can_keep_unverified(self) -> None:
+        config = validate_config({"domain": "example.org", "email": "test@example.org", "reality": True})
         with (
-            patch(
-                "setup3ui.interactive.shutil.which",
-                side_effect=["/usr/bin/openssl", "/usr/bin/ping"],
-            ),
-            patch(
-                "setup3ui.interactive.subprocess.run", side_effect=fixture
-            ) as command,
-            patch(
-                "setup3ui.interactive.time.monotonic",
-                side_effect=[0, 0.18, 1, 1.05, 2, 3],
-            ),
-            redirect_stdout(output),
+            patch("builtins.input", side_effect=["n", "bad.example.org", "9", "m", "y"]),
+            patch("setup3ui.interactive.probe", return_value=Probe("bad.example.org", None, "timeout")) as probe,
+            patch("setup3ui.interactive.scan", return_value=["other.example.org"]) as scan,
+            redirect_stdout(StringIO()) as output,
         ):
-            _sni_latency(
-                [
-                    "slow.example.org",
-                    "fast.example.org",
-                    "bad.example.org",
-                    "slow.example.org",
-                    "down.example.org",
-                ]
-            )
-        lines = output.getvalue().splitlines()
-        self.assertIn("fast.example.org: TLS 1.3", lines[0])
-        self.assertIn("ping 12 ms", lines[0])
-        self.assertIn("slow.example.org: TLS 1.3", lines[1])
-        self.assertIn("ping unavailable", lines[1])
-        self.assertIn("certificate check failed", lines[2])
-        self.assertIn("down.example.org", lines[3])
-        self.assertEqual(command.call_count, 6)
+            result = ask_reality_sni(config)
+        self.assertEqual(result["reality_sni"], ["bad.example.org"])
+        self.assertIn("saved as unverified", output.getvalue())
+        probe.assert_called_once_with("bad.example.org", "bad.example.org:443")
+        scan.assert_called_once_with(config, "top10")
+
+    def test_scanner_offers_subnet_timeout_and_manual_fallback(self) -> None:
+        config = validate_config({"domain": "example.org", "email": "test@example.org", "reality": True})
+        with (
+            patch("builtins.input", side_effect=["y", "invalid", "scanner", "", "", "manual", "", "y"]),
+            patch("setup3ui.interactive.primary_subnet", return_value="192.0.2.0/28"),
+            patch("setup3ui.interactive.scan", side_effect=[ValueError("offline"), []]) as scan,
+            patch("setup3ui.interactive.probe", return_value=Probe("www.cloudflare.com", None, "timeout")),
+            redirect_stdout(StringIO()) as output,
+        ):
+            result = ask_reality_sni(config)
+        self.assertEqual(result["reality_target"], "www.cloudflare.com:443")
+        self.assertIn("offline", output.getvalue())
+        self.assertEqual(scan.call_args_list[0].args[1:], ("scanner", "192.0.2.0/28", 30))
+
+    def test_missing_subnet_can_switch_to_top10(self) -> None:
+        config = validate_config({"domain": "example.org", "email": "test@example.org", "reality": True})
+        with (
+            patch("builtins.input", side_effect=["y", "scanner", "", ""]),
+            patch("setup3ui.interactive.primary_subnet", return_value=None),
+            patch("setup3ui.interactive.scan", return_value=["tls.example.org"]) as scan,
+        ):
+            result = ask_reality_sni(config)
+        self.assertEqual(result["reality_sni"], ["tls.example.org"])
+        scan.assert_called_once_with(config, "top10")
+
+    def test_caddy_conflict_and_failed_manual_probe_allow_reentry(self) -> None:
+        config = validate_config({
+            "domain": "example.org", "email": "test@example.org",
+            "panel_domain": "www.cloudflare.com", "https": "caddy", "reality": True,
+        }, pending_sni=True)
+        with (
+            patch("builtins.input", side_effect=["n", "", "bad.example.org", "n", "good.example.org"]),
+            patch("setup3ui.interactive.scan", return_value=[]),
+            patch("setup3ui.interactive.probe", side_effect=[
+                Probe("bad.example.org", None, "timeout"), Probe("good.example.org", 10),
+            ]) as probe,
+            patch("setup3ui.host.reality._ping", return_value="unavailable"),
+            redirect_stdout(StringIO()) as output,
+        ):
+            result = ask_reality_sni(config)
+        self.assertEqual(result["reality_sni"], ["good.example.org"])
+        self.assertIn("differs from the Caddy site names", output.getvalue())
+        self.assertEqual(probe.call_count, 2)
+
+    def test_scanner_reprompts_for_bad_timeout_and_no_results(self) -> None:
+        config = validate_config({"domain": "example.org", "email": "test@example.org", "reality": True})
+        with (
+            patch("builtins.input", side_effect=["y", "scanner", "", "0", "top10", "top10", ""]),
+            patch("setup3ui.interactive.primary_subnet", return_value="192.0.2.0/28"),
+            patch("setup3ui.interactive.scan", side_effect=[[], ["tls.example.org"]]),
+            redirect_stdout(StringIO()) as output,
+        ):
+            result = ask_reality_sni(config)
+        self.assertEqual(result["reality_sni"], ["tls.example.org"])
+        self.assertIn("timeout must be positive", output.getvalue())
+        self.assertIn("No suitable REALITY SNI found.", output.getvalue())

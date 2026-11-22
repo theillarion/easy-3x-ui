@@ -47,38 +47,34 @@ if [ "$#" -gt 0 ]; then
 fi
 
 run() {
-    runner=$1
-    shift
     docker run --rm --network "container:$daemon" -v "$root:/work:ro" -v "$scratch:/sandbox" \
-        -v "$report:/report" -e "SUITE=$runner" -e PYTHONDONTWRITEBYTECODE=1 \
-        -e DOCKER_HOST=unix:///sandbox/docker.sock "setup3ui-test:$runner" "$@"
+        -v "$report:/report" -e SUITE=trixie -e PYTHONDONTWRITEBYTECODE=1 \
+        -e DOCKER_HOST=unix:///sandbox/docker.sock setup3ui-test:trixie "$@"
 }
 
+docker build -t setup3ui-test:trixie -f "$root/tests/sandbox/Dockerfile" "$root/tests/sandbox"
 status=0
-for suite in bookworm trixie; do
-    docker build --build-arg "DEBIAN=$suite" -t "setup3ui-test:$suite" -f "$root/tests/sandbox/Dockerfile" "$root/tests/sandbox"
-    run "$suite" sh -ec '
-        ln -sf /sandbox/docker.sock /var/run/docker.sock
-        mkdir -p "/sandbox/$SUITE" "/sandbox/$SUITE/tmp"
-        export TMPDIR="/sandbox/$SUITE/tmp" COVERAGE_FILE="/sandbox/$SUITE/.coverage"
-        status=0
-        for group in tests tests/integration; do
-            python3 -m coverage run --rcfile=tests/sandbox/.coveragerc -m unittest discover -s "$group" -v || status=1
-        done
-        COVERAGE_PROCESS_START=/work/tests/sandbox/.coveragerc \
-            python3 -m unittest discover -s tests/functional -v || status=1
-        exit "$status"
-    ' || status=1
-done
+run sh -ec '
+    ln -sf /sandbox/docker.sock /var/run/docker.sock
+    mkdir -p /sandbox/trixie/tmp
+    export TMPDIR=/sandbox/trixie/tmp COVERAGE_FILE=/sandbox/trixie/.coverage
+    status=0
+    for group in tests tests/integration; do
+        python3 -m coverage run --rcfile=tests/sandbox/.coveragerc -m unittest discover -s "$group" -v || status=1
+    done
+    COVERAGE_PROCESS_START=/work/tests/sandbox/.coveragerc \
+        python3 -m unittest discover -s tests/functional -v || status=1
+    exit "$status"
+' || status=1
 
-run trixie sh -ec '
+run sh -ec '
     export COVERAGE_FILE=/sandbox/.coverage
-    python3 -m coverage combine --rcfile=tests/sandbox/.coveragerc /sandbox/bookworm /sandbox/trixie
+    python3 -m coverage combine --rcfile=tests/sandbox/.coveragerc /sandbox/trixie
     python3 -m coverage report --rcfile=tests/sandbox/.coveragerc > /report/coverage.txt
     python3 -m coverage json --rcfile=tests/sandbox/.coveragerc -o /report/coverage.json
     cat /report/coverage.txt
 ' || status=1
 if [ "${coverage_mode:-}" != "--report-only" ]; then
-    run trixie python3 tests/sandbox/report.py /report/coverage.json || status=1
+    run python3 tests/sandbox/report.py /report/coverage.json || status=1
 fi
 exit "$status"

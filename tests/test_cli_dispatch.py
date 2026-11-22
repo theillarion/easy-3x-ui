@@ -56,6 +56,39 @@ class CliDispatchTests(TestCase):
         self.assertIn("proxy tcp/127.0.0.1:8444", self.stdout.getvalue())
         self.assertIn("reverse_proxy 127.0.0.1:2053", self.stdout.getvalue())
 
+    def test_reality_sni_requires_terminal_and_confirmation(self) -> None:
+        with self.assertRaises(SystemExit):
+            self.run_command("reality-sni")
+        self.assertIn("Run reality-sni in a terminal", self.stderr.getvalue())
+        self.config.write_text(
+            "domain: example.org\nemail: fixture@example.org\nreality: true\n",
+            encoding="utf-8",
+        )
+        with (
+            patch("setup3ui.cli.sys.stdin.isatty", return_value=True),
+            patch("setup3ui.interactive.ask_reality_sni", return_value={
+                "reality_sni": ["tls.example.org"], "reality_target": "tls.example.org:443",
+            }),
+            patch("setup3ui.deploy.reconfigure.apply_config") as apply,
+            patch("builtins.input", side_effect=["n", "yes"]),
+        ):
+            self.run_command("reality-sni")
+            apply.assert_not_called()
+            self.run_command("reality-sni")
+        self.assertEqual(apply.call_args.args[2]["reality_sni"], ["tls.example.org"])
+        self.assertIn("Current REALITY SNI", self.stdout.getvalue())
+        self.assertIn("Proposed REALITY SNI", self.stdout.getvalue())
+
+    def test_render_caddy_rejects_unresolved_auto_sni(self) -> None:
+        with self.config.open("a", encoding="utf-8") as file:
+            file.write("https: caddy\nreality: true\nreality_sni_auto: true\nreality_sni: [tls.example.org]\n")
+        with patch("setup3ui.host.reality.scan") as scan:
+            self.run_command("validate", "--config", str(self.config))
+            with self.assertRaises(SystemExit):
+                self.run_command("render-caddy", "--config", str(self.config))
+        scan.assert_not_called()
+        self.assertIn("resolved REALITY SNI", self.stderr.getvalue())
+
     def test_no_confirmation_leaves_data_and_token_alone(self) -> None:
         selectors = (
             (

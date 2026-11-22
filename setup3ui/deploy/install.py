@@ -14,6 +14,7 @@ from setup3ui.certificates.acme import issue_certificate
 from setup3ui.certificates.renewal import install_renewal_timer
 from setup3ui.deploy.caddy import prepare_caddy_image, render_caddy
 from setup3ui.deploy.compose import render_compose
+from setup3ui.deploy.managed import grant_installation_access
 from setup3ui.host.dns import check_dns
 from setup3ui.host.docker import docker, prepare_docker
 from setup3ui.host.files import atomic_write, check_root_owned_directory
@@ -138,6 +139,9 @@ def install(
             api.login(username, password)
             _backup_database(database, directory)
             create_inbounds(api, config, image)
+        with (directory / "logs" / "setup.log").open("a", encoding="utf-8") as log:
+            log.write("Installed 3x-ui and verified HTTPS from this server.\n")
+        grant_installation_access(directory, config.get("docker_user"))
         if not use_caddy:
             install_renewal_timer(directory, panel)
     except (OSError, ValueError, subprocess.CalledProcessError, KeyboardInterrupt):
@@ -148,8 +152,6 @@ def install(
                 raise ValueError(f"Could not stop the failed installation. Files kept in {directory}.") from exc
         shutil.rmtree(directory)
         raise
-    with (directory / "logs" / "setup.log").open("a", encoding="utf-8") as log:
-        log.write("Installed 3x-ui and verified HTTPS from this server.\n")
     print(f"Panel: {panel_url}\nSubscription base URL: {sub_url}")
     if token:
         print(f"Node API token: {token}")

@@ -11,6 +11,7 @@ import tarfile
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from textwrap import dedent
 from threading import Thread
 from unittest import TestCase
 
@@ -141,11 +142,93 @@ class CliTests(TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)["ports"]["TCP REALITY"], 443)
 
+    def test_shell_resolves_yaml_sni_before_install_or_reconfigure(self) -> None:
+        directory = self.root / "install"
+        saved = directory / "config.yml"
+        openssl = self.root / "openssl"
+        openssl.write_text(
+            "#!/bin/sh\n"
+            'case " $* " in *" -servername $SNI_FIXTURE_OK "*) echo "ALPN protocol: h2";; *) exit 1;; esac\n',
+            encoding="utf-8",
+        )
+        openssl.chmod(0o755)
+        # Fixture the deployment boundary. Integration tests exercise the real panel and Caddy.
+        (self.root / "sitecustomize.py").write_text(
+            dedent("""
+                from contextlib import nullcontext
+                from pathlib import Path
+                from unittest.mock import patch
+
+                import yaml
+
+                def save(config):
+                    path = Path(config["install_dir"]) / "config.yml"
+                    path.parent.mkdir(exist_ok=True)
+                    path.write_text(yaml.safe_dump({
+                        key: value for key, value in config.items() if not key.startswith("admin_")
+                    }))
+
+                def install(config, *args, **kwargs):
+                    save(config)
+                    print("Fixture installed.")
+
+                def apply_config(directory, current, desired, auth, *, interactive):
+                    save(desired)
+                    print("Fixture reconfigured.")
+
+                patch("setup3ui.deploy.install.install", install).start()
+                patch("setup3ui.deploy.reconfigure.apply_config", apply_config).start()
+                patch("setup3ui.deploy.managed.operation_lock", nullcontext).start()
+                patch("setup3ui.deploy.managed.managed_directory", lambda path: path).start()
+                patch("setup3ui.cli.deploy_when_requested").start()
+            """),
+            encoding="utf-8",
+        )
+        self.config.write_text(
+            f"domain: example.org\nemail: test@example.org\nhttps: caddy\nreality: true\n"
+            f"install_dir: {directory}\nreality_sni_auto: true\n"
+            "reality_sni: [bad.example.org, backup.example.org]\nadmin_password: fixture-secret\n",
+            encoding="utf-8",
+        )
+
+        def run(config: Path, compatible: str) -> subprocess.CompletedProcess[str]:
+            env = os.environ | {
+                "PATH": f"{self.root}:{os.environ['PATH']}",
+                "PYTHONPATH": f"{self.root}:{ROOT}",
+                "SNI_FIXTURE_OK": compatible,
+            }
+            return subprocess.run(
+                [str(ROOT / "install.sh"), "--config", str(config)],
+                cwd=self.root, env=env, text=True, capture_output=True, timeout=30, check=False,
+            )
+
+        result = run(self.config, "www.apple.com")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Fixture installed.", result.stdout)
+        self.assertNotIn("fixture-secret", result.stdout + result.stderr)
+        config = yaml.safe_load(saved.read_text())
+        self.assertEqual(config["reality_sni"], ["www.apple.com"])
+        self.assertEqual(config["reality_target"], "www.apple.com:443")
+        self.assertNotIn("reality_sni_auto", config)
+        self.assertNotIn("admin_password", config)
+        result = run(saved, "")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Settings already match.", result.stdout)
+        result = run(self.config, "backup.example.org")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Fixture reconfigured.", result.stdout)
+        self.assertEqual(yaml.safe_load(saved.read_text())["reality_sni"], ["backup.example.org"])
+        before = saved.read_bytes()
+        result = run(self.config, "")
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("No fallback REALITY SNI in reality_sni passed", result.stderr)
+        self.assertEqual(saved.read_bytes(), before)
+
     def test_installer_update_replaces_cli_only_after_hash_check(self) -> None:
-        self.assertIn(
+        self.assertEqual(
             os.environ.get("SUITE"),
-            {"bookworm", "trixie"},
-            "Run in the Debian sandbox.",
+            "trixie",
+            "Run in the Debian 13 sandbox.",
         )
         archive = self.root / "installer.tar.gz"
         with tarfile.open(archive, "w:gz") as bundle:

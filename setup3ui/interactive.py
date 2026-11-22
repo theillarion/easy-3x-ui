@@ -1,14 +1,13 @@
 """Ask for settings for an interactive installation."""
 
 import os
-import shutil
-import subprocess
-import time
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from typing import Any
 
+from setup3ui.config import DOMAIN, scanner_subnet, validate_config
+from setup3ui.host.reality import blocked_names, primary_subnet, probe, report_probes, scan
+
 EXAMPLE = "/media/hls/9636f214/index.m3u8"
-SNI_CHOICES = ("www.cloudflare.com", "www.microsoft.com")
 
 
 def _value(label: str, default: str) -> str:
@@ -27,69 +26,83 @@ def _port(label: str, default: int) -> int:
     return int(result)
 
 
-def _sni_latency(names: Iterable[str]) -> None:
-    openssl = shutil.which("openssl")
-    if not openssl:
-        print("Install openssl to check REALITY targets.")
-        return
-    results = []
-    failed = []
-    for host in dict.fromkeys(names):
-        begin = time.monotonic()
+def _pick_name(names: list[str]) -> str:
+    for index, name in enumerate(names, 1):
+        print(f"{index}. {name}")
+    while True:
+        choice = _value("REALITY SNI number, or m for manual entry", "1").lower()
+        if choice == "m":
+            return ""
+        if choice.isascii() and choice.isdecimal() and 1 <= int(choice) <= len(names):
+            return names[int(choice) - 1]
+        print("Choose a number from the list or m.")
+
+
+def _scan_automatically(config: Mapping[str, Any]) -> str:
+    while True:
+        mode = _value("REALITY scan type (top10, scanner, or manual)", "top10").lower()
+        if mode == "manual":
+            return ""
+        if mode not in {"scanner", "top10"}:
+            print("Choose top10, scanner, or manual.")
+            continue
         try:
-            reply = subprocess.run(
-                [
-                    openssl,
-                    "s_client",
-                    "-connect",
-                    f"{host}:443",
-                    "-servername",
-                    host,
-                    "-verify_hostname",
-                    host,
-                    "-verify_return_error",
-                    "-tls1_3",
-                    "-groups",
-                    "X25519",
-                    "-alpn",
-                    "h2",
-                ],
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=7,
-            )
-            if reply.returncode or "ALPN protocol: h2" not in reply.stdout:
-                failed.append(host)
-            else:
-                results.append((round((time.monotonic() - begin) * 1000), host))
-        except (OSError, subprocess.TimeoutExpired):
-            failed.append(host)
-    ping = shutil.which("ping")
-    for latency, host in sorted(results):
-        ping_time = "unavailable"
-        if ping:
-            try:
-                reply = subprocess.run(
-                    [ping, "-n", "-c", "1", "-W", "2", "--", host],
-                    timeout=3,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                for line in reply.stdout.splitlines():
-                    if "time=" in line:
-                        ping_time = line.partition("time=")[2].strip()
-                        break
-            except (OSError, subprocess.TimeoutExpired):
-                pass
-        print(f"{host}: TLS 1.3, HTTP/2, X25519 and certificate OK, TLS {latency} ms, ping {ping_time}.")
-    for host in failed:
-        print(f"{host}: TLS 1.3, HTTP/2, X25519 or certificate check failed.")
+            if mode == "scanner":
+                default = primary_subnet()
+                value = _value("IPv4 subnet to scan, or top10", str(default) if default else "top10")
+                if value.lower() == "top10":
+                    mode = "top10"
+                else:
+                    network = scanner_subnet(value)
+                    timeout = _port("Reality Scanner timeout in seconds", 30)
+                    if timeout < 1:
+                        raise ValueError("The scanner timeout must be positive.")
+                    names = scan(config, mode, str(network), timeout)
+            if mode == "top10":
+                names = scan(config, mode)
+        except (OSError, ValueError) as exc:
+            print(f"REALITY scan failed: {exc}")
+            continue
+        if names:
+            return _pick_name(names)
+        print("No suitable REALITY SNI found.")
 
 
-def ask_config(defaults: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def ask_reality_sni(config: Mapping[str, Any]) -> dict[str, Any]:
+    """Choose an SNI and its corresponding REALITY target in the terminal."""
+    if _yes("Find REALITY SNI automatically?"):
+        name = _scan_automatically(config)
+        if name:
+            return {"reality_sni": [name], "reality_target": f"{name}:443"}
+    original = config["reality_sni"][0]
+    default = original
+    excluded = blocked_names(config)
+    alternatives_checked = False
+    while True:
+        name = _value("REALITY SNI", default).lower()
+        if not DOMAIN.fullmatch(name) or name in excluded:
+            print("Enter a domain name that differs from the Caddy site names.")
+            continue
+        target = config.get("reality_target", f"{name}:443") if name == original else f"{name}:443"
+        result = probe(name, target)
+        if report_probes([result]):
+            return {"reality_sni": [name], "reality_target": target}
+        if not alternatives_checked:
+            alternatives_checked = True
+            names = scan(config, "top10")
+            if names:
+                selected = _pick_name(names)
+                if selected:
+                    return {"reality_sni": [selected], "reality_target": f"{selected}:443"}
+        if _yes("Keep this SNI as unverified?"):
+            print(f"{name}: saved as unverified.")
+            return {"reality_sni": [name], "reality_target": target}
+        default = name
+
+
+def ask_config(
+    defaults: Mapping[str, Any] | None = None, *, choose_sni: bool = True,
+) -> dict[str, Any]:
     """Ask only for settings used by the selected options."""
     defaults = defaults or {}
     https = _value("HTTPS with certbot or caddy", defaults.get("https", "certbot")).lower()
@@ -124,12 +137,6 @@ def ask_config(defaults: Mapping[str, Any] | None = None) -> dict[str, Any]:
         data["direct_xhttp_path"] = _value(
             f"Direct XHTTP path, or generate (example {EXAMPLE})", defaults.get("direct_xhttp_path", "/")
         )
-    if data["reality"] or data["direct_xhttp"]:
-        name = _value("REALITY SNI", defaults.get("reality_sni", SNI_CHOICES)[0]).lower()
-        if _yes("Check the SNI and show other choices"):
-            _sni_latency((name, *SNI_CHOICES))
-            name = _value("REALITY SNI to use", name).lower()
-        data["reality_sni"] = [name]
     if https == "caddy":
         cdns: list[dict[str, Any]] = list(defaults.get("cdn", ()))
         while _yes("Add a CDN XHTTP backend" if not cdns else "Add another CDN XHTTP backend"):
@@ -144,6 +151,10 @@ def ask_config(defaults: Mapping[str, Any] | None = None) -> dict[str, Any]:
                 }
             )
         data["cdn"] = cdns
-    if defaults.get("reality_target"):
-        data["reality_target"] = defaults["reality_target"]
+    for field in ("reality_sni", "reality_target"):
+        if field in defaults:
+            data[field] = defaults[field]
+    if choose_sni and (data["reality"] or data["direct_xhttp"]):
+        data = validate_config(data, pending_sni=True)
+        data.update(ask_reality_sni(data))
     return data

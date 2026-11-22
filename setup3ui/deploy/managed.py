@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from setup3ui.host.commands import run
-from setup3ui.host.docker import docker
+from setup3ui.host.docker import docker, docker_user
 from setup3ui.host.files import check_root_owned_directory
 
 DEFAULT_DIRECTORY = Path("/opt/3x-ui")
@@ -41,6 +41,14 @@ def managed_directory(directory: Path) -> Path:
         raise ValueError(f"No managed installation at {directory}.")
     check_root_owned_directory(directory)
     return directory
+
+
+def grant_installation_access(directory: Path, configured_user: str | None) -> None:
+    """Let the selected Docker user read the installation tree."""
+    user = docker_user(configured_user)
+    if not shutil.which("setfacl"):
+        run("apt-get", "install", "-y", "--no-remove", "--no-install-recommends", "acl")
+    run("setfacl", "-R", "-P", "-m", f"u:{user.pw_uid}:rX", str(directory))
 
 
 def compose(directory: Path, *args: str, capture: bool = False) -> subprocess.CompletedProcess[str]:

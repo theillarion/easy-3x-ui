@@ -124,6 +124,7 @@ class SandboxTest(TestCase):
             with (
                 patch.object(os, "geteuid", return_value=0),
                 patch.object(setup, "prepare_docker"),
+                patch.object(setup, "grant_installation_access"),
                 patch.object(setup, "check_dns"),
                 patch.object(setup, "check_host"),
                 patch.object(setup, "check_root_owned_directory"),

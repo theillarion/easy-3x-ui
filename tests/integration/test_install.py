@@ -30,6 +30,7 @@ class SandboxTest(TestCase):
     def test_install(self) -> None:
         with tempfile.TemporaryDirectory(prefix="3xui-install-") as td:
             root = Path(td).resolve()
+            root.chmod(0o755)
             project = root.name
             directory = root / "install"
             config = {
@@ -43,6 +44,7 @@ class SandboxTest(TestCase):
                 "panel_port": free_port(),
                 "subscription_port": free_port(),
                 "email": "test@example.org",
+                "docker_user": "nobody",
                 "admin_username": "fixture",
                 "admin_password": "a secret with $ signs",
             }
@@ -129,6 +131,15 @@ class SandboxTest(TestCase):
                         setup.install(validate_config(config), {})
                     assert "Node API token: " in out.getvalue()
                     assert timer.call_count == 1
+                    subprocess.run(
+                        [
+                            "runuser", "-u", "nobody", "--", "sh", "-ec",
+                            'cd "$1"; test -r compose.yml; test -r config.yml; '
+                            'test -r db/x-ui.db; test ! -w db/x-ui.db',
+                            "sh", str(directory),
+                        ],
+                        check=True,
+                    )
                     saved = yaml.safe_load((directory / "config.yml").read_text())
                     assert all(not k.startswith("admin_") for k in saved)
                     with closing(sqlite3.connect(directory / "db/x-ui.db")) as db, db:
