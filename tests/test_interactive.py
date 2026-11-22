@@ -4,11 +4,17 @@ import os
 from contextlib import redirect_stdout
 from io import StringIO
 from unittest import TestCase
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 from setup3ui.config import validate_config
-from setup3ui.host.reality import Probe
+from setup3ui.host.reality import Probe, ProbeResult
 from setup3ui.interactive import EXAMPLE, ask_config, ask_reality_sni
+from setup3ui.terminal import ScanDisplay, Terminal
+
+
+class TerminalStream(StringIO):
+    def isatty(self) -> bool:
+        return True
 
 
 class InteractiveTests(TestCase):
@@ -131,9 +137,11 @@ class InteractiveTests(TestCase):
         ):
             result = ask_reality_sni(config)
         self.assertEqual(result["reality_sni"], ["bad.example.org"])
+        self.assertIn("Checking TLS for bad.example.org (bad.example.org:443)", output.getvalue())
+        self.assertIn("Failed · timeout", output.getvalue())
         self.assertIn("saved as unverified", output.getvalue())
         probe.assert_called_once_with("bad.example.org", "bad.example.org:443")
-        scan.assert_called_once_with(config, "top10")
+        scan.assert_called_once_with(config, "top10", output=ANY)
 
     def test_scanner_offers_subnet_timeout_and_manual_fallback(self) -> None:
         config = validate_config({"domain": "example.org", "email": "test@example.org", "reality": True})
@@ -158,7 +166,7 @@ class InteractiveTests(TestCase):
         ):
             result = ask_reality_sni(config)
         self.assertEqual(result["reality_sni"], ["tls.example.org"])
-        scan.assert_called_once_with(config, "top10")
+        scan.assert_called_once_with(config, "top10", output=ANY)
 
     def test_caddy_conflict_and_failed_manual_probe_allow_reentry(self) -> None:
         config = validate_config({
@@ -177,6 +185,7 @@ class InteractiveTests(TestCase):
             result = ask_reality_sni(config)
         self.assertEqual(result["reality_sni"], ["good.example.org"])
         self.assertIn("differs from the Caddy site names", output.getvalue())
+        self.assertIn("good.example.org: Passed · TLS 10 ms", output.getvalue())
         self.assertEqual(probe.call_count, 2)
 
     def test_scanner_reprompts_for_bad_timeout_and_no_results(self) -> None:
@@ -191,3 +200,28 @@ class InteractiveTests(TestCase):
         self.assertEqual(result["reality_sni"], ["tls.example.org"])
         self.assertIn("timeout must be positive", output.getvalue())
         self.assertIn("No suitable REALITY SNI found.", output.getvalue())
+
+    def test_no_color_keeps_live_status_and_narrow_results_use_a_list(self) -> None:
+        with (
+            patch.dict(os.environ, {"TERM": "xterm", "NO_COLOR": "1", "COLUMNS": "36"}),
+            redirect_stdout(TerminalStream()) as output,
+        ):
+            terminal = Terminal()
+            terminal.heading("REALITY SNI")
+            display = ScanDisplay(terminal)
+            with display.track():
+                display.status("Top 10: checking TLS", "1/5")
+            terminal.probe_results([ProbeResult(Probe("long-name.example.org", 40), "12 ms")], numbered=True)
+        self.assertIn("\r\x1b[2KTop 10: checking TLS  1/5", output.getvalue())
+        self.assertNotIn("\x1b[1;36m", output.getvalue())
+        self.assertIn("1. long-name.example.org\n   Passed · TLS 40 ms · Ping 12 ms", output.getvalue())
+
+    def test_redirected_status_prints_each_phase_once_without_control_codes(self) -> None:
+        with patch.dict(os.environ, {"TERM": "xterm"}), redirect_stdout(StringIO()) as output:
+            display = ScanDisplay(Terminal())
+            with display.track():
+                display.status("Top 10: checking TLS", "0/2")
+                display.status("Top 10: checking TLS", "1/2")
+                display.status("Measuring ping")
+                display.notice("Done.")
+        self.assertEqual(output.getvalue(), "Top 10: checking TLS (0/2)...\nMeasuring ping...\nDone.\n")

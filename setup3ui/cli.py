@@ -6,6 +6,8 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -133,20 +135,43 @@ def _managed_installation(default: Path) -> Path | None:
 
 
 def _install_summary(config: dict[str, Any]) -> None:
+    from setup3ui.terminal import Terminal
+
+    terminal = Terminal()
+    terminal.heading("Review & apply")
+    ports = port_plan(config)
     summary = {
-        "install_dir": config["install_dir"],
-        "https": config["https"],
-        "panel": config["panel_domain"],
-        "subscription": config["subscription_domain"],
-        "ports": port_plan(config),
-        "cdn": config["cdn"],
+        "Directory": str(config["install_dir"]),
+        "HTTPS": config["https"].title(),
+        "Panel": f"{config['panel_domain']}:{config['panel_port']}",
+        "Subscriptions": f"{config['subscription_domain']}:{config['subscription_port']}",
+        "ACME HTTP": str(ports["ACME HTTP"]),
     }
+    if "Caddy HTTPS" in ports:
+        summary["Caddy HTTPS"] = str(ports["Caddy HTTPS"])
+    if config["reality"]:
+        port = ports["TCP REALITY"]
+        summary["TCP REALITY"] = f"Port {port}" if config["https"] == "certbot" else f"Backend port {port}"
     if config["direct_xhttp"]:
-        summary["direct_xhttp_path"] = config["direct_xhttp_path"]
+        summary["Direct XHTTP REALITY"] = f"Port {config['direct_xhttp_port']} · {config['direct_xhttp_path']}"
+    for index, cdn in enumerate(config["cdn"], 1):
+        summary[f"CDN {index} ({cdn['provider']})"] = f"{cdn['edge']} → {cdn['origin']}:{cdn['port']}{cdn['path']}"
     if config["reality"] or config["direct_xhttp"]:
         names = config["reality_sni"]
-        summary.update(reality_sni=names, reality_target=config.get("reality_target", f"{names[0]}:443"))
-    print(json.dumps(summary, indent=2))
+        summary["REALITY SNI"] = ", ".join(names)
+        summary["REALITY target"] = config.get("reality_target", f"{names[0]}:443")
+    terminal.pairs(summary)
+    terminal.line()
+
+
+@contextmanager
+def _report_install_interrupt(path: Path) -> Iterator[None]:
+    try:
+        yield
+    except KeyboardInterrupt:
+        if path.is_file():
+            raise KeyboardInterrupt("Run the same command to reopen the installation draft.") from None
+        raise
 
 
 def _interactive_install(args: argparse.Namespace, *, menu: bool, explicit_directory: bool) -> list[str]:
@@ -154,10 +179,11 @@ def _interactive_install(args: argparse.Namespace, *, menu: bool, explicit_direc
     from setup3ui.deploy.managed import managed_directory, operation_lock
     from setup3ui.install_draft import Draft, InvalidDraft, draft_lock
     from setup3ui.interactive import Questions, ask_config, ask_reality_sni
+    from setup3ui.terminal import Terminal
 
     if explicit_directory and not args.install_dir.is_absolute():
         raise ValueError("Enter an absolute installation directory.")
-    with draft_lock() as path:
+    with draft_lock() as path, _report_install_interrupt(path):
         try:
             draft = Draft.load(path)
         except InvalidDraft as exc:
@@ -167,6 +193,7 @@ def _interactive_install(args: argparse.Namespace, *, menu: bool, explicit_direc
             path.unlink()
             draft = None
         if draft is not None:
+            Terminal().heading("easy-3x-ui · Resume installation")
             while True:
                 choice = input("Continue the unfinished installation or start over? [continue]: ").strip().lower()
                 if choice in {"", "continue"}:
@@ -188,6 +215,7 @@ def _interactive_install(args: argparse.Namespace, *, menu: bool, explicit_direc
                     return [action, "--install-dir", str(directory)]
             action = "restore" if args.backup_source else "install"
             if menu:
+                Terminal().heading("easy-3x-ui · Installation")
                 while True:
                     action = input(
                         "Start a fresh install, restore a backup, or discover/adopt an existing panel [install]: "
@@ -212,6 +240,7 @@ def _interactive_install(args: argparse.Namespace, *, menu: bool, explicit_direc
         ):
             raise ValueError("The draft uses a different backup source. Choose start over to change it.")
         if draft.panel_installed:
+            Terminal().heading("Finish CLI installation")
             with operation_lock():
                 managed_directory(Path(answers["install_dir"]))
                 print("The panel is installed. Finishing CLI installation.")
@@ -227,6 +256,7 @@ def _interactive_install(args: argparse.Namespace, *, menu: bool, explicit_direc
             answers["install_dir"] = directory
             draft.save()
         else:
+            questions.section("Installation directory")
             directory = questions.value(
                 "install_dir", "Installation directory", str(args.install_dir),
                 lambda value: str(fresh_install_directory(Path(value))),
@@ -627,8 +657,8 @@ def entrypoint() -> None:
     """Run the CLI and handle terminal cancellation."""
     try:
         main()
-    except KeyboardInterrupt:
-        print("Interrupted.", file=sys.stderr)
+    except KeyboardInterrupt as exc:
+        print(f"Interrupted. {exc}".rstrip(), file=sys.stderr)
         sys.exit(130)
     except EOFError:
         print("Cancelled.", file=sys.stderr)

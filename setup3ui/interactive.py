@@ -15,6 +15,7 @@ from setup3ui.config import (
 )
 from setup3ui.host.reality import blocked_names, primary_subnet, probe, report_probes, scan
 from setup3ui.install_draft import Draft
+from setup3ui.terminal import ScanDisplay, Terminal
 
 EXAMPLE = "/media/hls/9636f214/index.m3u8"
 
@@ -24,6 +25,18 @@ class Questions:
 
     def __init__(self, draft: Draft | None = None) -> None:
         self.draft = draft
+        self.terminal = Terminal()
+        self._section = ""
+
+    def section(self, label: str) -> None:
+        """Set the heading for the next visible question or check."""
+        self._section = label
+
+    def show_section(self) -> None:
+        """Print the current heading once when a section has visible work."""
+        if self._section:
+            self.terminal.heading(self._section)
+            self._section = ""
 
     def answered(self, key: str) -> bool:
         """Tell whether the question already has an accepted answer."""
@@ -32,6 +45,7 @@ class Questions:
     def _ask(self, key: str, prompt: str, default: str, validate: Callable[[str], str]) -> str:
         if self.draft is not None and key in self.draft.answers:
             return self.draft.answers[key]
+        self.show_section()
         while True:
             entered = input(prompt).strip()
             try:
@@ -105,10 +119,6 @@ def _choice(value: str, options: tuple[str, ...], error: str) -> str:
 
 
 def _pick_name(questions: Questions, key: str, names: list[str]) -> str:
-    if not questions.answered(key):
-        for index, name in enumerate(names, 1):
-            print(f"{index}. {name}")
-
     def choose(value: str) -> str:
         value = value.lower()
         if value == "m":
@@ -127,17 +137,43 @@ def _pick_name(questions: Questions, key: str, names: list[str]) -> str:
             print(exc)
 
 
-def _scan_automatically(config: Mapping[str, Any], questions: Questions) -> str:
-    def run_scan(mode: str, cidr: str | None, timeout: int) -> list[str]:
-        try:
-            names = scan(config, mode, cidr, timeout) if cidr is not None else scan(config, mode)
-        except (OSError, ValueError) as exc:
-            print(f"REALITY scan failed: {exc}")
-            return []
-        if not names:
-            print("No suitable REALITY SNI found.")
-        return names
+def _choose_candidates(
+    config: Mapping[str, Any], questions: Questions, result_key: str, pick_key: str,
+    mode: str, cidr: str | None = None, timeout: int = 30,
+) -> str | None:
+    terminal = questions.terminal
+    display = ScanDisplay(terminal)
+    saved = questions.draft is not None and result_key in questions.draft.results
 
+    def run() -> list[str]:
+        questions.show_section()
+        try:
+            with display.track():
+                if cidr is None:
+                    return scan(config, mode, output=display)
+                return scan(config, mode, cidr, timeout, output=display)
+        except (OSError, ValueError) as exc:
+            terminal.line(f"REALITY scan failed: {exc}")
+            return []
+
+    names = questions.result(result_key, run)
+    if not questions.answered(pick_key):
+        if display.rows:
+            terminal.probe_results(display.rows, numbered=True)
+        elif names:
+            questions.show_section()
+            if saved:
+                terminal.line("Saved results:")
+            for index, name in enumerate(names, 1):
+                terminal.line(f"{index}. {name}")
+    if names:
+        return _pick_name(questions, pick_key, names)
+    if not saved:
+        terminal.line("No suitable REALITY SNI found.")
+    return None
+
+
+def _scan_automatically(config: Mapping[str, Any], questions: Questions) -> str:
     def subnet(value: str) -> str:
         return "top10" if value.lower() == "top10" else str(scanner_subnet(value))
 
@@ -175,14 +211,25 @@ def _scan_automatically(config: Mapping[str, Any], questions: Questions) -> str:
                 raise
             print(f"REALITY scan failed: {exc}")
             continue
-        names = questions.result(key, lambda: run_scan(mode, cidr, timeout))
-        if names:
-            return _pick_name(questions, f"{key}.pick", names)
+        selected = _choose_candidates(config, questions, key, f"{key}.pick", mode, cidr, timeout)
+        if selected is not None:
+            return selected
+
+
+def _verify_manual(questions: Questions, name: str, target: str) -> list[str]:
+    questions.show_section()
+    display = ScanDisplay(questions.terminal)
+    with display.track():
+        display.status(f"Checking TLS for {name} ({target})")
+        passed = report_probes([probe(name, target)], output=display)
+    questions.terminal.probe_results(display.rows, numbered=False)
+    return passed
 
 
 def ask_reality_sni(config: Mapping[str, Any], *, questions: Questions | None = None) -> dict[str, Any]:
     """Choose an SNI and its corresponding REALITY target in the terminal."""
     questions = questions or Questions()
+    questions.section("REALITY SNI")
     if questions.yes("sni.automatic", "Find REALITY SNI automatically?"):
         name = _scan_automatically(config, questions)
         if name:
@@ -209,16 +256,14 @@ def ask_reality_sni(config: Mapping[str, Any], *, questions: Questions | None = 
             except ValueError as exc:
                 print(exc)
         target = config.get("reality_target", f"{name}:443") if name == original else f"{name}:443"
-        if questions.result(f"{key}.probe", lambda: report_probes([probe(name, target)])):
+        if questions.result(f"{key}.probe", lambda: _verify_manual(questions, name, target)):
             return {"reality_sni": [name], "reality_target": target}
         if attempt == 0:
-            names = questions.result("sni.alternatives", lambda: scan(config, "top10"))
-            if names:
-                selected = _pick_name(questions, "sni.alternative", names)
-                if selected:
-                    return {"reality_sni": [selected], "reality_target": f"{selected}:443"}
+            selected = _choose_candidates(config, questions, "sni.alternatives", "sni.alternative", "top10")
+            if selected:
+                return {"reality_sni": [selected], "reality_target": f"{selected}:443"}
         if questions.yes(f"{key}.keep", "Keep this SNI as unverified?"):
-            print(f"{name}: saved as unverified.")
+            questions.terminal.line(questions.terminal.style(f"{name}: saved as unverified.", "33"))
             return {"reality_sni": [name], "reality_target": target}
         default = name
 
@@ -229,6 +274,7 @@ def ask_config(
     """Ask only for settings used by the selected options."""
     defaults = defaults or {}
     questions = questions or Questions()
+    questions.section("HTTPS & domains")
     https = questions.value(
         "https", "HTTPS with certbot or caddy", defaults.get("https", "certbot"),
         lambda value: _choice(value, ("certbot", "caddy"), "Choose certbot or caddy."),
@@ -262,6 +308,7 @@ def ask_config(
         questions.draft.answers["docker_user"] = validate_docker_user(sudo_user)
         questions.draft.save()
         data["docker_user"] = sudo_user
+    questions.section("Transports")
     data["reality"] = questions.yes("reality", "Use TCP REALITY", defaults.get("reality", False))
     data["direct_xhttp"] = questions.yes(
         "direct_xhttp", "Use direct XHTTP REALITY", defaults.get("direct_xhttp", False),

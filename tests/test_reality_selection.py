@@ -7,7 +7,7 @@ from pathlib import Path
 from subprocess import CalledProcessError, CompletedProcess, TimeoutExpired
 from tempfile import TemporaryDirectory
 from unittest import TestCase
-from unittest.mock import patch
+from unittest.mock import Mock, call, patch
 
 from setup3ui.config import SNI_RUN_FIELDS, validate_config
 from setup3ui.host import reality
@@ -151,6 +151,28 @@ class RealityTests(TestCase):
             )
             self.assertEqual(command.call_args.kwargs["timeout"], 30)
             self.assertIn("reached its deadline", output.getvalue())
+            display = Mock(spec=reality.ScanOutput)
+            with (
+                patch.object(reality, "probe", side_effect=lambda name, target: reality.Probe(name, 10)),
+                patch.object(reality, "_ping", return_value="17 ms"),
+            ):
+                self.assertEqual(
+                    reality.scan(validate_config(self.base), "scanner", "192.0.2.0/28", 30, output=display),
+                    ["log-only.example.org", "tls.example.org"],
+                )
+            self.assertEqual(display.status.call_args_list, [
+                call("Preparing Reality Scanner"),
+                call("Scanning 192.0.2.0/28 on TCP/443 with a 30s deadline"),
+                call("Reality Scanner: checking candidate TLS", "0/2"),
+                call("Reality Scanner: checking candidate TLS", "1/2"),
+                call("Reality Scanner: checking candidate TLS", "2/2"),
+                call("Measuring ping"),
+            ])
+            display.notice.assert_called_once_with("Reality Scanner reached its deadline. Checking completed results.")
+            display.results.assert_called_once_with([
+                reality.ProbeResult(reality.Probe("log-only.example.org", 10), "17 ms"),
+                reality.ProbeResult(reality.Probe("tls.example.org", 10), "17 ms"),
+            ])
             command.side_effect = CalledProcessError(1, "scanner")
             with self.assertRaisesRegex(ValueError, "Scanner failed"):
                 reality.scanner_names("192.0.2.0/28", 30)

@@ -8,11 +8,11 @@ import re
 import subprocess
 import time
 from collections.abc import Iterable, Mapping
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from ipaddress import IPv4Interface, IPv4Network
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, Protocol
 
 from setup3ui.config import DOMAIN, SNI_RUN_FIELDS, scanner_subnet, validate_config
 
@@ -42,6 +42,21 @@ class Probe(NamedTuple):
     name: str
     milliseconds: int | None
     error: str = ""
+
+
+class ProbeResult(NamedTuple):
+    probe: Probe
+    ping: str = ""
+
+
+class ScanOutput(Protocol):
+    """Receive scan progress and results for an interactive caller."""
+
+    def status(self, label: str, detail: str = "") -> None: ...
+
+    def notice(self, message: str) -> None: ...
+
+    def results(self, rows: list[ProbeResult]) -> None: ...
 
 
 def probe(name: str, target: str) -> Probe:
@@ -86,9 +101,15 @@ def _ping(name: str) -> str:
     return "unavailable"
 
 
-def report_probes(probes: Iterable[Probe]) -> list[str]:
+def report_probes(probes: Iterable[Probe], *, output: ScanOutput | None = None) -> list[str]:
     """Print probe results and return compatible names in latency order."""
     results = sorted(probes, key=lambda item: (item.milliseconds is None, item.milliseconds, item.name))
+    if output is not None:
+        if results and results[0].milliseconds is not None:
+            output.status("Measuring ping")
+        rows = [ProbeResult(item, _ping(item.name) if item.milliseconds is not None else "") for item in results]
+        output.results(rows)
+        return [item.name for item in results if item.milliseconds is not None]
     passed = []
     for item in results:
         if item.milliseconds is None:
@@ -139,7 +160,7 @@ def primary_subnet() -> IPv4Network | None:
     return None
 
 
-def _download_scanner(directory: Path) -> Path:
+def _download_scanner(directory: Path, *, quiet: bool = False) -> Path:
     asset = SCANNER_ASSETS.get(platform.machine()) if platform.system() == "Linux" else None
     if asset is None:
         raise ValueError("Reality Scanner supports Linux amd64 and arm64.")
@@ -152,7 +173,7 @@ def _download_scanner(directory: Path) -> Path:
                 "--connect-timeout", "10", "--max-time", "60",
                 "--output", str(binary), f"{SCANNER_RELEASE}/{binary.name}",
             ],
-            check=True, timeout=65,
+            check=True, timeout=65, stderr=subprocess.PIPE if quiet else None,
         )
         with binary.open("rb") as stream:
             digest = hashlib.file_digest(stream, "sha256").hexdigest()
@@ -181,42 +202,71 @@ def _scanner_names(output: Path, log: Path) -> list[str]:
     return list(dict.fromkeys(name for name in normalized if DOMAIN.fullmatch(name)))
 
 
-def scanner_names(cidr: str | None, timeout: int) -> list[str]:
+def scanner_names(cidr: str | None, timeout: int, *, output: ScanOutput | None = None) -> list[str]:
     """Run the pinned scanner and read any complete results produced by its deadline."""
     network = scanner_subnet(cidr) if cidr else primary_subnet()
     if network is None:
         raise ValueError("Could not determine the VPS subnet. Set reality_sni_scan_cidr.")
-    print(f"Scanning {network} on TCP/443 with a {timeout}s deadline.", flush=True)
+    label = f"Scanning {network} on TCP/443 with a {timeout}s deadline"
+    if output is None:
+        print(f"{label}.", flush=True)
+    else:
+        output.status("Preparing Reality Scanner")
     with TemporaryDirectory(prefix="setup3ui-reality-") as stage:
         directory = Path(stage)
-        binary = _download_scanner(directory)
-        output = directory / "result.csv"
+        binary = _download_scanner(directory, quiet=output is not None)
+        csv_path = directory / "result.csv"
         log = directory / "scanner.log"
+        if output is not None:
+            output.status(label)
         try:
             with log.open("wb") as stream:
                 subprocess.run(
                     [
-                        str(binary), "-addr", str(network), "-port", "443", "-out", str(output),
+                        str(binary), "-addr", str(network), "-port", "443", "-out", str(csv_path),
                         "-thread", "8", "-timeout", "5",
                     ],
                     cwd=directory, stdin=subprocess.DEVNULL, stdout=stream,
                     stderr=subprocess.DEVNULL, check=True, timeout=timeout,
                 )
         except subprocess.TimeoutExpired:
-            print("Reality Scanner reached its deadline. Checking completed results.")
+            message = "Reality Scanner reached its deadline. Checking completed results."
+            if output is None:
+                print(message)
+            else:
+                output.notice(message)
         except (OSError, subprocess.CalledProcessError) as exc:
             raise ValueError("Reality Scanner failed.") from exc
-        return _scanner_names(output, log)
+        return _scanner_names(csv_path, log)
 
 
-def scan(config: Mapping[str, Any], mode: str, cidr: str | None = None, timeout: int = 30) -> list[str]:
+def scan(
+    config: Mapping[str, Any], mode: str, cidr: str | None = None, timeout: int = 30,
+    *, output: ScanOutput | None = None,
+) -> list[str]:
     """Run the selected discovery and rank compatible domains by TLS latency."""
-    names = SNI_CHOICES if mode == "top10" else scanner_names(cidr, timeout)
+    names = SNI_CHOICES if mode == "top10" else scanner_names(cidr, timeout, output=output)
     excluded = blocked_names(config)
+    candidates = [name for name in names if name not in excluded]
+    label = "Top 10: checking TLS" if mode == "top10" else "Reality Scanner: checking candidate TLS"
+    total = len(candidates)
+    if output is not None:
+        output.status(label, f"0/{total}")
     with ThreadPoolExecutor(max_workers=8) as pool:
-        candidates = (name for name in names if name not in excluded)
-        results = list(pool.map(lambda name: probe(name, f"{name}:443"), candidates))
-    return report_probes(results)
+        futures = []
+        results = []
+        try:
+            for name in candidates:
+                futures.append(pool.submit(probe, name, f"{name}:443"))
+            for completed, future in enumerate(as_completed(futures), 1):
+                results.append(future.result())
+                if output is not None:
+                    output.status(label, f"{completed}/{total}")
+        except KeyboardInterrupt:
+            for future in futures:
+                future.cancel()
+            raise
+    return report_probes(results, output=output)
 
 
 def resolve_sni(config: dict[str, Any]) -> dict[str, Any]:

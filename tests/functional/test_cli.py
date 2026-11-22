@@ -147,26 +147,35 @@ class CliTests(TestCase):
         other.mkdir()
         (self.root / "sitecustomize.py").write_text(dedent(f"""
             from pathlib import Path
-            from setup3ui import install_draft, interactive
+            from time import sleep
+            from setup3ui import install_draft
             from setup3ui import cli
             from setup3ui.deploy import install as deployment
+            from setup3ui.host import reality
             from setup3ui.panel.bootstrap import credentials
 
             install_draft.STATE_DIRECTORY = Path({str(draft.parent)!r})
             cli._managed_installation = lambda default: None
 
-            def scan(*args):
-                print("fixture scan executed")
-                return ["second.example.net", "first.example.net"]
+            def probe(name, target):
+                sleep(1.5)
+                if name == "failed.example.net":
+                    return reality.Probe(name, None, "TLS check timed out")
+                return reality.Probe(name, 42 if name == "first.example.net" else 10)
 
             def fail_after_credentials(config, ports, *, source, interactive):
                 credentials(config, interactive=interactive)
                 raise ValueError("fixture deploy failure")
 
-            interactive.scan = scan
+            reality.SNI_CHOICES = ("first.example.net", "failed.example.net", "second.example.net")
+            reality.probe = probe
+            reality._ping = lambda name: "1 ms"
             deployment.install = fail_after_credentials
         """), encoding="utf-8")
-        env = os.environ | {"PYTHONPATH": f"{self.root}:{ROOT}", "SUDO_USER": "fixture"}
+        env = os.environ | {
+            "PYTHONPATH": f"{self.root}:{ROOT}", "SUDO_USER": "fixture",
+            "TERM": "xterm", "COLUMNS": "80", "NO_COLOR": "",
+        }
 
         with self.install_terminal(self.root, env) as (expect, finish):
             expect("existing panel [install]:", "\n")
@@ -187,8 +196,13 @@ class CliTests(TestCase):
             expect("Add a CDN XHTTP backend", "n\n")
             expect("Find REALITY SNI automatically?", "y\n")
             expect("REALITY scan type", "top10\n")
-            expect("REALITY SNI number", "\x03")
-            self.assertIn("fixture scan executed", finish(130))
+            expect("Top 10: checking TLS", "\x03")
+            output = finish(130)
+        self.assertIn("\x1b[1;36mInstallation directory", output)
+        self.assertIn("HTTPS & domains", output)
+        self.assertIn("Transports", output)
+        self.assertIn("Run the same command to reopen the installation draft.", output)
+        self.assertNotIn("REALITY SNI number", output)
 
         state = json.loads(draft.read_text())
         self.assertEqual(state["answers"]["install_dir"], str(target))
@@ -196,8 +210,22 @@ class CliTests(TestCase):
         self.assertEqual(stat.S_IMODE(draft.parent.stat().st_mode), 0o700)
         self.assertEqual(draft.stat().st_uid, 0)
         self.assertFalse(target.exists())
+        self.assertEqual(state["results"], {})
 
         with self.install_terminal(other, env) as (expect, finish):
+            expect("Continue the unfinished installation or start over?", "continue\n")
+            expect("Top 10: checking TLS")
+            expect("REALITY SNI number", "\x03")
+            output = finish(130)
+        self.assertIn("3/3", output)
+        self.assertIn("0/3  1s", output)
+        self.assertIn("TLS check timed out", output)
+        self.assertLess(output.index("second.example.net"), output.index("first.example.net"))
+        state = json.loads(draft.read_text())
+        self.assertEqual(state["version"], 1)
+        self.assertEqual(state["results"], {"sni.auto.0": ["second.example.net", "first.example.net"]})
+
+        with self.install_terminal(other, env | {"TERM": "dumb"}) as (expect, finish):
             expect("Continue the unfinished installation or start over?", "continue\n")
             expect("REALITY SNI number", "2\n")
             expect("Install with caddy?", "y\n")
@@ -205,9 +233,11 @@ class CliTests(TestCase):
             expect("Panel password:", "fixture-only-password\n")
             output = finish(1)
         self.assertIn("1. second.example.net\r\n2. first.example.net", output)
+        self.assertIn("Review & apply", output)
         self.assertIn("first.example.net:443", output)
         self.assertIn(state["answers"]["direct_xhttp_path"], output)
-        self.assertNotIn("fixture scan executed", output)
+        self.assertNotIn("Top 10: checking TLS", output)
+        self.assertNotIn("\x1b[", output)
         self.assertNotIn("HTTPS with certbot or caddy", output)
         self.assertIn("fixture deploy failure", output)
         self.assertNotIn("fixture-only-password", output)
