@@ -93,6 +93,7 @@ class CliTests(TestCase):
             os.execve(ROOT / "install.sh", [str(ROOT / "install.sh")], env)
 
         output = bytearray()
+        matched_until = 0
         reaped = False
 
         def read() -> bool:
@@ -109,10 +110,13 @@ class CliTests(TestCase):
             return bool(chunk)
 
         def expect(prompt: str, answer: str | None = None) -> None:
+            nonlocal matched_until
             deadline = monotonic() + 15
-            while prompt.encode() not in output:
+            marker = prompt.encode()
+            while (position := output.find(marker, matched_until)) < 0:
                 if monotonic() >= deadline or not read():
                     self.fail(f"Missing prompt {prompt!r}: {output.decode(errors='replace')}")
+            matched_until = position + len(marker)
             if answer is not None:
                 os.write(terminal, answer.encode())
 
@@ -194,6 +198,7 @@ class CliTests(TestCase):
             expect("Direct XHTTP port", "\n")
             expect("Direct XHTTP path, or generate", "generate\n")
             expect("Add a CDN XHTTP backend", "n\n")
+            expect("Enable nftguard [Y/n]", "n\n")
             expect("Find REALITY SNI automatically?", "y\n")
             expect("REALITY scan type", "top10\n")
             expect("Top 10: checking TLS", "\x03")
@@ -201,6 +206,7 @@ class CliTests(TestCase):
         self.assertIn("\x1b[1;36mInstallation directory", output)
         self.assertIn("HTTPS & domains", output)
         self.assertIn("Transports", output)
+        self.assertIn("Scanner protection", output)
         self.assertIn("Run the same command to reopen the installation draft.", output)
         self.assertNotIn("REALITY SNI number", output)
 
@@ -213,8 +219,10 @@ class CliTests(TestCase):
         self.assertEqual(state["results"], {})
 
         with self.install_terminal(other, env) as (expect, finish):
-            expect("Continue the unfinished installation or start over?", "continue\n")
-            expect("Top 10: checking TLS")
+            expect("Continue the unfinished installation? [Y/n]", "\n")
+            expect("0/3  1s", "\n")
+            expect("REALITY SNI number", "invalid\n")
+            expect("Choose a number from the list or m.")
             expect("REALITY SNI number", "\x03")
             output = finish(130)
         self.assertIn("3/3", output)
@@ -224,13 +232,18 @@ class CliTests(TestCase):
         state = json.loads(draft.read_text())
         self.assertEqual(state["version"], 1)
         self.assertEqual(state["results"], {"sni.auto.0": ["second.example.net", "first.example.net"]})
+        self.assertNotIn("sni.auto.0.pick", state["answers"])
 
         with self.install_terminal(other, env | {"TERM": "dumb"}) as (expect, finish):
-            expect("Continue the unfinished installation or start over?", "continue\n")
+            expect("Continue the unfinished installation? [Y/n]", "y\n")
             expect("REALITY SNI number", "2\n")
             expect("Install with caddy?", "y\n")
             expect("Panel username:", "fixture-operator\n")
             expect("Panel password:", "fixture-only-password\n")
+            expect("Confirm panel password:", "fixture-wrong-password\n")
+            expect("Passwords do not match. Try again.")
+            expect("Panel password:", "fixture-only-password\n")
+            expect("Confirm panel password:", "fixture-only-password\n")
             output = finish(1)
         self.assertIn("1. second.example.net\r\n2. first.example.net", output)
         self.assertIn("Review & apply", output)
@@ -241,11 +254,12 @@ class CliTests(TestCase):
         self.assertNotIn("HTTPS with certbot or caddy", output)
         self.assertIn("fixture deploy failure", output)
         self.assertNotIn("fixture-only-password", output)
+        self.assertNotIn("fixture-wrong-password", output)
         self.assertNotIn("fixture-only-password", draft.read_text())
         self.assertNotIn("fixture-operator", draft.read_text())
 
         with self.install_terminal(other, env) as (expect, finish):
-            expect("Continue the unfinished installation or start over?", "start over\n")
+            expect("Continue the unfinished installation? [Y/n]", "n\n")
             expect("existing panel [install]:", "\x03")
             finish(130)
         self.assertFalse(draft.exists())

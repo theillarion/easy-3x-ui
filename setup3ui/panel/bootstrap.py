@@ -26,7 +26,11 @@ def credentials(config: Mapping[str, Any], *, interactive: bool = True) -> tuple
     if name is None and interactive and os.isatty(0):
         name = input("Panel username: ").strip()
     if password is None and interactive and os.isatty(0):
-        password = getpass.getpass("Panel password: ")
+        while True:
+            password = getpass.getpass("Panel password: ")
+            if password == getpass.getpass("Confirm panel password: "):
+                break
+            print("Passwords do not match. Try again.")
     if not all(
         isinstance(value, str) and value.strip() and not any(c in value for c in "\0\r\n") for value in (name, password)
     ):

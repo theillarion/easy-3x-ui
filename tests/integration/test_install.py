@@ -35,6 +35,7 @@ class SandboxTest(TestCase):
             directory = root / "install"
             config = {
                 "https": "certbot",
+                "nftguard": {"enabled": False},
                 "reality": False,
                 "direct_xhttp": False,
                 "cdn": [],
@@ -98,6 +99,16 @@ class SandboxTest(TestCase):
                     input=input_text,
                 )
 
+            def compose_with_extra(config):
+                definition = yaml.safe_load(render_compose(config))
+                definition["services"]["extra"] = {
+                    "image": definition["services"]["panel"]["image"],
+                    "pull_policy": "never",
+                    "entrypoint": ["sleep", "3600"],
+                    "stop_grace_period": "1s",
+                }
+                return yaml.safe_dump(definition)
+
             def issue(path, panel, sub, email):
                 target = path / "certs" / "live" / panel
                 target.mkdir(parents=True)
@@ -113,8 +124,10 @@ class SandboxTest(TestCase):
                 "-f",
                 str(directory / "compose.yml"),
             )
+            render_compose = setup.render_compose
             with (
                 patch.object(os, "geteuid", return_value=0),
+                patch.object(setup, "render_compose", compose_with_extra),
                 patch.dict(os.environ, {"SSL_CERT_FILE": str(chain)}),
                 patch.object(setup, "prepare_docker"),
                 patch.object(setup, "check_dns"),
@@ -129,8 +142,16 @@ class SandboxTest(TestCase):
                     out = io.StringIO()
                     with contextlib.redirect_stdout(out):
                         setup.install(validate_config(config), {})
-                    assert "Node API token: " in out.getvalue()
+                    transcript = out.getvalue()
+                    stages = ("Prepare Docker", "Check ports and DNS", "Prepare container images",
+                              "Create panel database", "Request HTTPS certificates with Certbot",
+                              "Start services", "Verify HTTPS", "Finish installation", "Node API token: ")
+                    positions = [transcript.index(stage) for stage in stages]
+                    self.assertEqual(positions, sorted(positions))
                     assert timer.call_count == 1
+                    self.assertTrue(docker(*base, "ps", "-q", "extra", capture=True).stdout.strip())
+                    self.assertFalse(docker(*base, "ps", "-aq", "certbot", capture=True).stdout.strip())
+                    self.assertFalse((directory / "nftguard-state").exists())
                     subprocess.run(
                         [
                             "runuser", "-u", "nobody", "--", "sh", "-ec",

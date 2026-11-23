@@ -6,7 +6,9 @@ from itertools import count
 from typing import Any
 
 from setup3ui.config import (
+    NFTGUARD_DEFAULTS,
     _hostname,
+    nftguard_allowlist,
     scanner_subnet,
     validate_config,
     validate_docker_user,
@@ -268,6 +270,33 @@ def ask_reality_sni(config: Mapping[str, Any], *, questions: Questions | None = 
         default = name
 
 
+def _ask_nftguard(questions: Questions, defaults: Mapping[str, Any]) -> dict[str, Any]:
+    questions.section("Scanner protection")
+    defaults = NFTGUARD_DEFAULTS | dict(defaults)
+    enabled = questions.yes("nftguard.enabled", "Enable nftguard", defaults["enabled"])
+    if not enabled:
+        return {"enabled": False}
+    dry_run = questions.yes("nftguard.dry_run", "Start in dry-run mode", defaults["dry_run"])
+    if not dry_run and not questions.answered("nftguard.allow_cidrs"):
+        questions.show_section()
+        print("Allow your management SSH address before enabling the host firewall rules.")
+    return {
+        "enabled": True,
+        "dry_run": dry_run,
+        "enable_vk_output": questions.yes(
+            "nftguard.enable_vk_output", "Block outgoing connections to VK, MAX and OK", defaults["enable_vk_output"],
+        ),
+        "allow_cidrs": questions.value(
+            "nftguard.allow_cidrs", "IPv4 addresses/CIDRs to allow (comma-separated, '-' for none)",
+            defaults["allow_cidrs"] or "-", lambda value: "" if value == "-" else nftguard_allowlist(value, 4),
+        ),
+        "allow_cidrs6": questions.value(
+            "nftguard.allow_cidrs6", "IPv6 addresses/CIDRs to allow (comma-separated, '-' for none)",
+            defaults["allow_cidrs6"] or "-", lambda value: "" if value == "-" else nftguard_allowlist(value, 6),
+        ),
+    }
+
+
 def ask_config(
     defaults: Mapping[str, Any] | None = None, *, choose_sni: bool = True, questions: Questions | None = None,
 ) -> dict[str, Any]:
@@ -356,6 +385,7 @@ def ask_config(
                 }
             )
         data["cdn"] = cdns
+    data["nftguard"] = _ask_nftguard(questions, defaults.get("nftguard", {}))
     for field in ("reality_sni", "reality_target"):
         if field in defaults:
             data[field] = defaults[field]

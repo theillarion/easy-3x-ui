@@ -1,0 +1,31 @@
+services:
+  panel:
+    volumes:
+      - type: bind
+        source: ./certs
+        target: /certs
+        read_only: true
+        bind:
+          create_host_path: false
+
+  certbot:
+    image: certbot/certbot:v5.1.0
+    pull_policy: never
+    profiles: [certificates]
+    network_mode: host
+    volumes:
+      - type: bind
+        source: ./certs
+        target: /etc/letsencrypt
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./certbot-work
+        target: /var/lib/letsencrypt
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./certbot-log
+        target: /var/log/letsencrypt
+        bind:
+          create_host_path: false

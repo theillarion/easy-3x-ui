@@ -32,10 +32,13 @@ def docker_environment() -> dict[str, str]:
     return {key: value for key, value in os.environ.items() if not key.startswith("DOCKER_")}
 
 
-def docker(*args: str, capture: bool = False, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+def docker(
+    *args: str, capture: bool = False, input_text: str | None = None, timeout: float | None = None,
+) -> subprocess.CompletedProcess[str]:
     """Run Docker against the local system socket."""
     return run(
-        "docker", "--host", DOCKER_SOCKET, *args, capture=capture, env=docker_environment(), input_text=input_text
+        "docker", "--host", DOCKER_SOCKET, *args, capture=capture, env=docker_environment(), input_text=input_text,
+        timeout=timeout,
     )
 
 

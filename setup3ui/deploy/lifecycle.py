@@ -13,6 +13,7 @@ from setup3ui.certificates.acme import certificate_lock
 from setup3ui.certificates.renewal import UNIT, UNIT_DIR
 from setup3ui.deploy.caddy import prepare_caddy_image
 from setup3ui.deploy.managed import backup_installation, compose
+from setup3ui.deploy.nftguard import STATE_DIRECTORY, remove_table
 from setup3ui.host.commands import run
 from setup3ui.host.docker import docker
 from setup3ui.host.files import atomic_write
@@ -130,10 +131,17 @@ def uninstall(directory: Path, *, purge: bool) -> None:
         timer_service.unlink()
         (UNIT_DIR / f"{UNIT}.timer").unlink(missing_ok=True)
         run("systemctl", "daemon-reload")
+    try:
+        remove_table(directory)
+    except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+        detail = getattr(exc, "stderr", None) or str(exc)
+        raise ValueError(f"Could not remove the nftguard table. Files kept in {directory}. {detail.strip()}") from exc
     compose(directory, "down")
     if purge:
         # Only delete paths used by this installer.
-        for name in ("db", "certs", "certbot-work", "certbot-log", "backups", "logs", "caddy-data", "caddy-state"):
+        for name in (
+            "db", "certs", "certbot-work", "certbot-log", "backups", "logs", "caddy-data", "caddy-state", STATE_DIRECTORY,
+        ):
             path = directory / name
             if path.is_symlink():
                 path.unlink()

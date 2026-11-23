@@ -55,6 +55,7 @@ class SandboxTest(TestCase):
             config = validate_config(
                 {
                     "https": "caddy",
+                    "nftguard": {"enabled": False},
                     "domain": "example.org",
                     "email": "check@example.org",
                     "install_dir": str(directory),
@@ -76,7 +77,7 @@ class SandboxTest(TestCase):
             normal = render_caddy(config)
 
             def docker(
-                *argv: str, capture: bool = False, input_text: str | None = None
+                *argv: str, capture: bool = False, input_text: str | None = None, timeout: float | None = None,
             ) -> subprocess.CompletedProcess[str]:
                 args = list(argv)
                 if args[0] == "compose":
@@ -96,6 +97,7 @@ class SandboxTest(TestCase):
                     text=True,
                     capture_output=capture,
                     input=input_text,
+                    timeout=timeout,
                 )
 
             def local_cert(config):

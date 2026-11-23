@@ -1,0 +1,34 @@
+services:
+  caddy:
+    image: setup-3x-ui-caddy:2.11.7-l4
+    pull_policy: never
+    network_mode: host
+    volumes:
+      - type: bind
+        source: ./caddy-config
+        target: /etc/caddy
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./caddy-data
+        target: /data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./caddy-state
+        target: /config
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./www
+        target: /srv
+        read_only: true
+        bind:
+          create_host_path: false
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    restart: unless-stopped

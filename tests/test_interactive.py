@@ -32,6 +32,7 @@ class InteractiveTests(TestCase):
             "",
             "4443",
             "n",
+            "n",
             "",
         ]
         with (
@@ -48,6 +49,8 @@ class InteractiveTests(TestCase):
             "Add a CDN", " ".join(call.args[0] for call in prompt.call_args_list)
         )
         self.assertFalse(result["direct_xhttp"])
+        self.assertFalse(result["nftguard"]["enabled"])
+        self.assertNotIn("dry-run mode", " ".join(call.args[0] for call in prompt.call_args_list))
 
     def test_caddy_prompts_use_restore_defaults_and_can_add_two_backends(self) -> None:
         defaults = {
@@ -83,6 +86,7 @@ class InteractiveTests(TestCase):
             "next.example.org",
             "",
             "generate",
+            "n",
             "n",
             "y",
             "top10",
@@ -225,3 +229,18 @@ class InteractiveTests(TestCase):
                 display.status("Measuring ping")
                 display.notice("Done.")
         self.assertEqual(output.getvalue(), "Top 10: checking TLS (0/2)...\nMeasuring ping...\nDone.\n")
+
+    def test_installation_box_fits_or_preserves_full_lines_in_plain_text(self) -> None:
+        lines = ["Panel: https://panel.example.org/fixture/", "Node API token: fixture-token"]
+        with patch.dict(os.environ, {"TERM": "xterm", "NO_COLOR": "1", "COLUMNS": "80"}):
+            with redirect_stdout(TerminalStream()) as output:
+                Terminal().box("Installation complete", lines)
+            frame = output.getvalue().strip().splitlines()
+            self.assertTrue(frame[0].startswith("╭─ Installation complete "))
+            self.assertTrue(frame[-1].endswith("╯"))
+            self.assertEqual(len(set(map(len, frame))), 1)
+            self.assertIn(lines[0], frame[1])
+            self.assertIn(lines[1], frame[2])
+            with patch.dict(os.environ, {"COLUMNS": "32"}), redirect_stdout(TerminalStream()) as narrow:
+                Terminal().box("Installation complete", lines)
+        self.assertEqual(narrow.getvalue().splitlines(), lines)

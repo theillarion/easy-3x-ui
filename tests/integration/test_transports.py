@@ -51,6 +51,7 @@ class TransportTests(TestCase):
             config = validate_config(
                 {
                     "https": "caddy",
+                    "nftguard": {"enabled": False},
                     "domain": "example.org",
                     "email": "check@example.org",
                     "install_dir": str(directory),

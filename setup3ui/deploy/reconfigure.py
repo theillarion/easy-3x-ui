@@ -115,6 +115,7 @@ def apply_config(
         "reality",
         "direct_xhttp",
         "docker_user",
+        "nftguard",
     }
     for key in fixed:
         if current.get(key) != desired.get(key):

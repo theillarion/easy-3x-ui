@@ -102,8 +102,6 @@ def _install_renewal_runtime(directory: Path) -> None:
         "setup3ui/certificates/__init__.py",
         "setup3ui/certificates/acme.py",
         "setup3ui/certificates/renewal.py",
-        "setup3ui/deploy/__init__.py",
-        "setup3ui/deploy/compose.py",
         "setup3ui/host/__init__.py",
         "setup3ui/host/clock.py",
         "setup3ui/host/commands.py",

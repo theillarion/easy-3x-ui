@@ -8,6 +8,12 @@ email: admin@example.com
 https: caddy
 reality: true
 direct_xhttp: true
+nftguard:
+  enabled: true
+  dry_run: false
+  enable_vk_output: false
+  allow_cidrs: ""  # Comma-separated management IPv4 addresses or CIDRs.
+  allow_cidrs6: ""  # Comma-separated management IPv6 addresses or CIDRs.
 # Uncomment this group to select a REALITY SNI when applying this file.
 # reality_sni_auto: true
 # reality_sni_scan: top10  # Or scanner to discover names in an IPv4 subnet.

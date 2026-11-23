@@ -3,7 +3,8 @@
 import os
 import shutil
 import sys
-from collections.abc import Iterator, Mapping
+import termios
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from threading import Event, Lock, Thread
 from time import monotonic
@@ -41,6 +42,19 @@ class Terminal:
         width = max(map(len, fields))
         for label, value in fields.items():
             self.line(f"  {label:<{width}}  {value}")
+
+    def box(self, title: str, lines: Sequence[str]) -> None:
+        """Frame a result when the terminal can show each line in full."""
+        width = max(len(title) + 1, max(map(len, lines), default=0))
+        if not self.live or width + 4 > self.width:
+            for line in lines:
+                self.line(line)
+            return
+        self.line()
+        self.line(self.style(f"╭─ {title} {'─' * (width - len(title) - 1)}╮", "1;32"))
+        for line in lines:
+            self.line(f"│ {line:<{width}} │")
+        self.line(self.style(f"╰{'─' * (width + 2)}╯", "1;32"))
 
     def probe_results(self, rows: list[ProbeResult], *, numbered: bool) -> None:
         """Show successful checks and leave failed checks out of the choices."""
@@ -96,6 +110,12 @@ class ScanDisplay:
             if worker is not None and worker.ident is not None:
                 worker.join()
             self._clear()
+            if sys.stdin.isatty():
+                try:
+                    termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+                except termios.error:
+                    # The terminal may have disconnected while the check ran.
+                    pass
 
     def status(self, label: str, detail: str = "") -> None:
         """Show the current phase and any measured count."""

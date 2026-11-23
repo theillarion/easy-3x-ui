@@ -158,15 +158,19 @@ class LifecycleTests(TestCase):
     ) -> None:
         uninstall_config = self.app / "config.yml"
         uninstall_config.touch()
+        guard_state = self.app / lifecycle.STATE_DIRECTORY
+        guard_state.mkdir()
         unrelated = self.app / "keep.txt"
         unrelated.touch()
         with patch.object(lifecycle, "UNIT_DIR", self.root):
             lifecycle.uninstall(self.app, purge=False)
             self.assertTrue(self.db.is_file())
             self.assertTrue(self.compose_file.is_file())
+            self.assertTrue(guard_state.is_dir())
             lifecycle.uninstall(self.app, purge=True)
         self.assertFalse(self.db.exists())
         self.assertFalse(uninstall_config.exists())
+        self.assertFalse(guard_state.exists())
         self.assertTrue(unrelated.is_file())
         self.assertIn("Other files remain", self.output.getvalue())
         self.assertEqual(

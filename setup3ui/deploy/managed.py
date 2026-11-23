@@ -51,10 +51,13 @@ def grant_installation_access(directory: Path, configured_user: str | None) -> N
     run("setfacl", "-R", "-P", "-m", f"u:{user.pw_uid}:rX", str(directory))
 
 
-def compose(directory: Path, *args: str, capture: bool = False) -> subprocess.CompletedProcess[str]:
+def compose(
+    directory: Path, *args: str, capture: bool = False, timeout: float | None = None,
+) -> subprocess.CompletedProcess[str]:
     """Run Compose for this installation."""
     return docker(
-        "compose", "--project-directory", str(directory), "-f", str(directory / "compose.yml"), *args, capture=capture
+        "compose", "--project-directory", str(directory), "-f", str(directory / "compose.yml"), *args,
+        capture=capture, timeout=timeout,
     )
 
 

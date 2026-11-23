@@ -8,7 +8,6 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from setup3ui.deploy.compose import render_compose
 from setup3ui.host.docker import docker
 from setup3ui.host.preflight import tcp_listeners
 
@@ -31,8 +30,11 @@ def issue_certificate(install_dir: Path, panel_domain: str, subscription_domain:
         with tempfile.TemporaryDirectory(prefix="setup-3x-ui-acme-") as temporary_dir:
             compose_file = install_dir / "compose.yml"
             if not compose_file.is_file():
+                from setup3ui.deploy.compose import render_compose
+
                 compose_file = Path(temporary_dir) / "compose.yml"
-                compose_file.write_text(render_compose({"https": "certbot"}), encoding="utf-8")
+                definition = render_compose({"https": "certbot", "nftguard": {"enabled": False}})
+                compose_file.write_text(definition, encoding="utf-8")
             docker(
                 "compose",
                 "--project-directory",

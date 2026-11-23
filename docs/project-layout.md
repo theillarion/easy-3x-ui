@@ -10,7 +10,7 @@
 | `setup3ui/deploy/` | Чистая установка, Compose, Caddy, управление установкой и обновление утилиты. |
 | `setup3ui/certificates/` | Выпуск сертификатов Certbot и его таймер. |
 | `setup3ui/diagnostics/` | Команда `test` и загрузка Xray для проверок. |
-| `setup3ui/assets/` | Dockerfile Caddy, Xray-шаблоны и файлы сайта. |
+| `setup3ui/assets/` | Docker Compose, Dockerfile Caddy, Xray-шаблоны и файлы сайта. |
 | `tests/` | Автоматические проверки. |
 | `docs/`, `features/` | Документация и идеи будущих фич. |
 

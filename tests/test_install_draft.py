@@ -113,7 +113,7 @@ class WizardTests(TestCase):
             stack.enter_context(cm)
         self.install = stack.enter_context(patch("setup3ui.deploy.install.install"))
         self.defaults = [
-            "", "example.org", "", "", "test@example.org", "", "", "n", "n",
+            "", "example.org", "", "", "test@example.org", "", "", "n", "n", "n",
         ]
 
     def run_wizard(self, answers: list, args: list[str] | None = None) -> list[str]:
@@ -122,19 +122,36 @@ class WizardTests(TestCase):
         return [call.args[0] for call in prompt.call_args_list]
 
     def test_resume_cdn_at_the_unanswered_field(self) -> None:
-        first = ["", str(self.destination), "caddy", *self.defaults[1:], "yes", "yandex", "cdn.example.org"]
+        first = ["", str(self.destination), "caddy", *self.defaults[1:-1], "yes", "yandex", "cdn.example.org"]
         with self.assertRaises(KeyboardInterrupt):
             self.run_wizard([*first, KeyboardInterrupt])
         draft = Draft.load(self.path)
         self.assertEqual(draft.answers["cdn.0.provider"], "yandex")
         self.assertNotIn("cdn.0.origin", draft.answers)
-        prompts = self.run_wizard(["", "", "", "generate", "n", "yes"])
+        prompts = self.run_wizard(["", "", "", "generate", "n", "n", "yes"])
         self.assertTrue(prompts[1].startswith("Origin domain"))
         config = self.install.call_args.args[0]
         self.assertEqual(config["install_dir"], str(self.destination))
         self.assertEqual(config["cdn"][0]["edge"], "cdn.example.org")
         self.assertNotIn("admin_password", config)
         self.assertFalse(self.path.exists())
+
+    def test_resume_nftguard_allowlist(self) -> None:
+        first = ["", str(self.destination), *self.defaults[:-1], "", "", "y", "2001:db8::1", "192.0.2.5"]
+        with self.assertRaises(KeyboardInterrupt):
+            self.run_wizard([*first, KeyboardInterrupt])
+        draft = Draft.load(self.path)
+        self.assertEqual(draft.answers["nftguard.enabled"], "y")
+        self.assertEqual(draft.answers["nftguard.allow_cidrs"], "192.0.2.5/32")
+        self.assertIn("must contain IPv4", self.output.getvalue())
+        prompts = self.run_wizard(["", "192.0.2.0/24", "2001:db8::1", "yes"])
+        self.assertTrue(prompts[1].startswith("IPv6 addresses"))
+        self.assertNotIn("Enable nftguard", " ".join(prompts))
+        guard = self.install.call_args.args[0]["nftguard"]
+        self.assertEqual(guard["allow_cidrs6"], "2001:db8::1/128")
+        self.assertTrue(guard["enable_vk_output"])
+        self.assertFalse(guard["dry_run"])
+        self.assertIn("Enforcing", self.output.getvalue())
 
     def test_backup_path_is_absolute_and_reused(self) -> None:
         backup = self.root / "backup.db"
@@ -144,7 +161,7 @@ class WizardTests(TestCase):
         with self.assertRaises(EOFError):
             self.run_wizard(["restore", str(self.destination), "missing.db", os.path.relpath(backup), EOFError])
         self.assertEqual(Draft.load(self.path).answers["backup_source"], str(backup))
-        prompts = self.run_wizard(["", "", "", "", "", "test@example.org", "", "", "n", "n", "yes"])
+        prompts = self.run_wizard(["", "", "", "", "", "test@example.org", "", "", "n", "n", "n", "yes"])
         self.assertTrue(prompts[1].startswith("HTTPS"))
         self.assertEqual(self.install.call_args.kwargs["source"], backup)
 
@@ -179,13 +196,13 @@ class WizardTests(TestCase):
         self.install.assert_not_called()
 
     def test_review_keeps_previous_answers_as_defaults(self) -> None:
-        answers = [*self.defaults[:6], "2053", "n", "n"]
+        answers = [*self.defaults[:6], "2053", "n", "n", "n"]
         with self.assertRaises(EOFError):
             self.run_wizard(["", str(self.destination), *answers, "y", EOFError])
         draft = Draft.load(self.path)
         self.assertEqual(draft.previous["subscription_port"], "2053")
         self.assertNotIn("subscription_port", draft.answers)
-        prompts = self.run_wizard(["", "", "", "", "", "", "", "2096", "", "", "yes"])
+        prompts = self.run_wizard(["", "", "", "", "", "", "", "2096", "", "", "", "yes"])
         self.assertIn("Main domain [example.org]: ", prompts)
         self.assertEqual(self.install.call_args.args[0]["subscription_port"], 2096)
 

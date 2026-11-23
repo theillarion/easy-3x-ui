@@ -6,7 +6,7 @@ import re
 import secrets
 import sys
 from collections.abc import Hashable, Iterable, Mapping
-from ipaddress import IPv4Network
+from ipaddress import IPv4Network, ip_network
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -26,7 +26,15 @@ DEFAULTS = {
     "direct_xhttp_port": 8443,
     "direct_xhttp_path": "/",
 }
+NFTGUARD_DEFAULTS = {
+    "enabled": True,
+    "dry_run": False,
+    "enable_vk_output": False,
+    "allow_cidrs": "",
+    "allow_cidrs6": "",
+}
 OPTIONAL_FIELDS = {
+    "nftguard",
     "domain",
     "panel_domain",
     "subscription_domain",
@@ -87,9 +95,12 @@ def _load_yaml(path: Path) -> object:
         raise ValueError(f"Invalid YAML{location}.") from None
 
 
-def read_config(path: Path, force: bool) -> dict[str, Any]:
-    """Load setup YAML, apply defaults, and validate its fields."""
-    return validate_config(_load_yaml(path), force)
+def read_config(path: Path, force: bool, *, installed: bool = False) -> dict[str, Any]:
+    """Load setup YAML and preserve the service selection of older installations."""
+    raw = _load_yaml(path)
+    if installed and isinstance(raw, dict):
+        raw.setdefault("nftguard", {"enabled": False})
+    return validate_config(raw, force)
 
 
 def validate_config(raw: object, force: bool = False, *, pending_sni: bool = False) -> dict[str, Any]:
@@ -102,6 +113,7 @@ def validate_config(raw: object, force: bool = False, *, pending_sni: bool = Fal
         source, DEFAULTS.keys() | OPTIONAL_FIELDS | SNI_RUN_FIELDS, "config", force,
     )
     config.setdefault("cdn", [])
+    config["nftguard"] = _nftguard_options(config.get("nftguard", {}), force)
     if config["https"] not in ("certbot", "caddy"):
         raise ValueError("https must be certbot or caddy.")
     if not isinstance(config["install_dir"], str) or not Path(config["install_dir"]).is_absolute():
@@ -166,6 +178,37 @@ def validate_config(raw: object, force: bool = False, *, pending_sni: bool = Fal
         config["reality_address"] = _hostname(config.get("reality_address", config.get("domain")), "reality_address")
     port_plan(config)
     return config
+
+
+def nftguard_allowlist(value: object, version: int) -> str:
+    """Normalize a comma-separated list of addresses or CIDRs of one family."""
+    field = "nftguard.allow_cidrs" if version == 4 else "nftguard.allow_cidrs6"
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a comma-separated string.")
+    networks = []
+    for item in re.split(r"[ ,]+", value.strip()):
+        if not item:
+            continue
+        try:
+            network = ip_network(item, strict=False)
+        except ValueError as exc:
+            raise ValueError(f"{field} contains an invalid IP address or CIDR: {item}.") from exc
+        if network.version != version or "%" in item:
+            raise ValueError(f"{field} must contain IPv{version} addresses or CIDRs without zone IDs.")
+        networks.append(str(network))
+    return ",".join(dict.fromkeys(networks))
+
+
+def _nftguard_options(raw: object, force: bool) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ValueError("nftguard must be a mapping.")
+    options = NFTGUARD_DEFAULTS | _clean_fields(raw, NFTGUARD_DEFAULTS, "nftguard", force)
+    for field in ("enabled", "dry_run", "enable_vk_output"):
+        if type(options[field]) is not bool:
+            raise ValueError(f"nftguard.{field} must be true or false.")
+    options["allow_cidrs"] = nftguard_allowlist(options["allow_cidrs"], 4)
+    options["allow_cidrs6"] = nftguard_allowlist(options["allow_cidrs6"], 6)
+    return options
 
 
 def _validate_sni_options(config: dict[str, Any]) -> None:

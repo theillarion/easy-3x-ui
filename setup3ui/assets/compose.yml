@@ -1,0 +1,58 @@
+name: 3x-ui
+
+services:
+  panel:
+    image: ghcr.io/mhsanaei/3x-ui:latest
+    pull_policy: never
+    network_mode: host
+    cap_add: [NET_ADMIN, NET_RAW]
+    devices: [/dev/net/tun:/dev/net/tun]
+    volumes:
+      - type: bind
+        source: ./db
+        target: /etc/x-ui
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./logs
+        target: /var/log/x-ui
+        bind:
+          create_host_path: false
+    environment:
+      XRAY_VMESS_AEAD_FORCED: "false"
+      XUI_ENABLE_FAIL2BAN: "false"
+      XUI_LOG_FOLDER: /var/log/x-ui
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    tty: true
+    restart: unless-stopped
+
+  nftguard:
+    image: ghcr.io/theillarion/anti-scan-govno:latest
+    pull_policy: never
+    network_mode: host
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN, SETUID, SETGID, SETPCAP]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: [/tmp]
+    volumes:
+      - type: bind
+        source: ./nftguard-state
+        target: /var/lib/nftguard
+        bind:
+          create_host_path: false
+    environment:
+      UPDATE_AT: "03:00"
+      TZ: Europe/Moscow
+      BOOT_DELAY_SECONDS: "120"
+      HTTP_TIMEOUT: 30s
+      RETRIES: "3"
+      LOG_LEVEL: info
+    healthcheck:
+      interval: 5s
+      start_period: 10m
+    restart: unless-stopped

@@ -76,7 +76,7 @@ def restore(directory: Path, source: Path | None, confirmed: bool) -> None:
             print("Restore cancelled.")
             return
     with operation_lock():
-        config = read_config(directory / "config.yml", False)
+        config = read_config(directory / "config.yml", False, installed=True)
         backup = restore_panel(directory, config, source)
     print(f"Database restored. Previous database: {backup / 'x-ui.db'}")
 
@@ -89,7 +89,7 @@ def change_reality_sni(directory: Path) -> None:
 
     directory = managed_directory(directory)
     path = directory / "config.yml"
-    current = read_config(path, False)
+    current = read_config(path, False, installed=True)
     if not (current["reality"] or current["direct_xhttp"]):
         raise ValueError("Enable TCP REALITY or direct XHTTP REALITY first.")
     selected = ask_reality_sni(current)
@@ -103,7 +103,7 @@ def change_reality_sni(directory: Path) -> None:
         print("REALITY settings unchanged.")
         return
     with operation_lock():
-        if read_config(path, False) != current:
+        if read_config(path, False, installed=True) != current:
             raise ValueError("Settings changed during SNI selection. Run reality-sni again.")
         apply_config(directory, current, validate_config(current | selected), {}, interactive=True)
 
@@ -160,7 +160,13 @@ def _install_summary(config: dict[str, Any]) -> None:
         names = config["reality_sni"]
         summary["REALITY SNI"] = ", ".join(names)
         summary["REALITY target"] = config.get("reality_target", f"{names[0]}:443")
+    guard = config["nftguard"]
+    summary["Scanner protection"] = (
+        ("Dry run" if guard["dry_run"] else "Enforcing") if guard["enabled"] else "Disabled"
+    )
     terminal.pairs(summary)
+    if guard["enabled"] and not guard["dry_run"]:
+        print("Check that the nftguard allowlist includes your management SSH address.")
     terminal.line()
 
 
@@ -195,14 +201,14 @@ def _interactive_install(args: argparse.Namespace, *, menu: bool, explicit_direc
         if draft is not None:
             Terminal().heading("easy-3x-ui · Resume installation")
             while True:
-                choice = input("Continue the unfinished installation or start over? [continue]: ").strip().lower()
-                if choice in {"", "continue"}:
+                choice = input("Continue the unfinished installation? [Y/n] ").strip().lower()
+                if choice in {"", "y", "yes", "continue"}:
                     break
-                if choice == "start over":
+                if choice in {"n", "no", "start over"}:
                     path.unlink()
                     draft = None
                     break
-                print("Enter continue or start over.")
+                print("Enter yes to continue or no to start over.")
         if draft is None:
             if menu:
                 directory = _managed_installation(args.install_dir)
@@ -233,12 +239,12 @@ def _interactive_install(args: argparse.Namespace, *, menu: bool, explicit_direc
             explicit_directory and "install_dir" in answers
             and args.install_dir.resolve() != Path(answers["install_dir"])
         ):
-            raise ValueError("The draft uses a different installation directory. Choose start over to change it.")
+            raise ValueError("The draft uses a different installation directory. Answer no to start over.")
         if args.backup_source and (
             answers["action"] != "restore"
             or ("backup_source" in answers and args.backup_source.resolve() != Path(answers["backup_source"]))
         ):
-            raise ValueError("The draft uses a different backup source. Choose start over to change it.")
+            raise ValueError("The draft uses a different backup source. Answer no to start over.")
         if draft.panel_installed:
             Terminal().heading("Finish CLI installation")
             with operation_lock():
@@ -465,7 +471,7 @@ def main(argv: list[str] | None = None) -> None:
                 with operation_lock():
                     print(f"Backup: {backup_installation(directory)}")
             elif args.action == "status":
-                show_status(directory, read_config(directory / "config.yml", False)["https"])
+                show_status(directory, read_config(directory / "config.yml", False, installed=True)["https"])
             elif args.action == "restore":
                 restore(directory, args.backup_source, args.yes)
             elif args.action == "update":
@@ -480,7 +486,7 @@ def main(argv: list[str] | None = None) -> None:
                     if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", args.token_name):
                         raise ValueError("Invalid token name.")
                 with operation_lock():
-                    config = read_config(directory / "config.yml", False)
+                    config = read_config(directory / "config.yml", False, installed=True)
                     update(directory, config, args.component)
                     if args.rotate_token:
                         rotate_token(directory, config, args.token_name)
@@ -496,7 +502,7 @@ def main(argv: list[str] | None = None) -> None:
                 if not isinstance(auth, dict):
                     raise ValueError("Authentication YAML must be a mapping.")
                 with operation_lock():
-                    reset(directory, read_config(directory / "config.yml", False), auth, interactive=not args.config)
+                    reset(directory, read_config(directory / "config.yml", False, installed=True), auth, interactive=not args.config)
             else:
                 from setup3ui.deploy.lifecycle import uninstall
 
@@ -611,11 +617,14 @@ def main(argv: list[str] | None = None) -> None:
             with operation_lock():
                 local_config = Path(config["install_dir"]) / "config.yml"
                 if local_config.is_file():
-                    current = read_config(local_config, False)
+                    current = read_config(local_config, False, installed=True)
                     if args.backup_source:
                         raise ValueError("Use restore to replace a database in an existing installation.")
                     if args.config:
-                        use_saved_paths(_load_yaml(args.config), current, config)
+                        incoming = _load_yaml(args.config)
+                        use_saved_paths(incoming, current, config)
+                        if isinstance(incoming, dict) and "nftguard" not in incoming:
+                            config["nftguard"] = current["nftguard"]
                         config = validate_config(config)
                     for field in ("reality_tag", "direct_xhttp_tag"):
                         if field in current:
