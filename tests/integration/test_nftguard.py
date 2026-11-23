@@ -4,8 +4,11 @@ import os
 import socket
 import subprocess
 from contextlib import ExitStack
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from threading import Thread
 from unittest import TestCase, skipUnless
 from unittest.mock import patch
 
@@ -18,6 +21,9 @@ from setup3ui.deploy.managed import compose
 from setup3ui.host.docker import docker
 
 PYTHON_IMAGE = "python:3.13-slim-trixie"
+NFTGUARD_TEST_IMAGE = (
+    f"{nftguard.IMAGE_REPOSITORY}@sha256:a9588f0bb9f89485fced829e39a5ca64050b42c0452666d5771156f43a4037f3"
+)
 
 
 @skipUnless(
@@ -30,29 +36,31 @@ class GuardIntegrationTests(TestCase):
     def test_dry_run_enforcement_conflict_and_removal(self) -> None:
         with TemporaryDirectory(prefix="guard-test-") as temporary, ExitStack() as cleanup:
             directory = Path(temporary)
-            image = f"setup3ui-{directory.name}:local"
+            image = NFTGUARD_TEST_IMAGE
             network = f"setup3ui-{directory.name}"
-            (directory / "feeds").mkdir()
-            (directory / "feeds" / "c24_v4").write_text("".join(f"192.0.2.{i}/32\n" for i in range(1, 101)))
-            (directory / "feeds" / "anti").write_bytes((directory / "feeds" / "c24_v4").read_bytes())
-            (directory / "feeds" / "c24_v6").write_text("2001:db8::/32\n")
-            (directory / "fixture.py").write_text(
-                "from pathlib import Path\n"
-                "p = Path('/usr/local/bin/nftguard')\n"
-                "text = p.read_text()\n"
-                "exec(compile(text, str(p), 'exec'), vars := {'__name__': 'fixture'})\n"
-                "for name, original in vars['URLS'].items():\n"
-                "    text = text.replace(original, 'file:///feeds/' + name)\n"
-                "p.write_text(text)\n"
-            )
-            (directory / "Dockerfile").write_text(
-                f"FROM {nftguard.IMAGE_REPOSITORY}:latest\n"
-                "COPY feeds /feeds\n"
-                "COPY fixture.py /tmp/fixture.py\n"
-                "RUN python3 /tmp/fixture.py && rm /tmp/fixture.py\n"
-            )
-            docker("build", "-t", image, str(directory))
-            cleanup.callback(docker, "image", "rm", image)
+            feeds = directory / "feeds"
+            feeds.mkdir()
+            (feeds / "input-v4.txt").write_text("".join(f"192.0.2.{i}/32\n" for i in range(1, 101)))
+            (feeds / "input-v6.txt").write_text("2001:db8::/32\n")
+            handler = partial(SimpleHTTPRequestHandler, directory=str(feeds))
+            server = cleanup.enter_context(ThreadingHTTPServer(("127.0.0.1", 0), handler))
+            Thread(target=server.serve_forever, daemon=True).start()
+            cleanup.callback(server.shutdown)
+            port = server.server_port
+            sources = [
+                {
+                    "name": f"fixture_v{version}",
+                    "url": f"http://127.0.0.1:{port}/input-v{version}.txt",
+                    "format": "txt",
+                    "direction": "input",
+                    "ip_version": version,
+                    "required": True,
+                    "min_entries": 1,
+                }
+                for version in (4, 6)
+            ]
+            (directory / "sources.yml").write_text(yaml.safe_dump({"sources": sources}))
+            docker("pull", image)
             docker("network", "create", "--subnet", "192.0.2.0/24", network)
             cleanup.callback(docker, "network", "rm", network)
 
@@ -70,7 +78,8 @@ class GuardIntegrationTests(TestCase):
                 guard["image"] = image
                 guard["pull_policy"] = "never"
                 guard["stop_grace_period"] = "1s"
-                guard["environment"]["BOOT_DELAY_SECONDS"] = "0"
+                guard["environment"].update(BOOT_DELAY_SECONDS="0", SOURCES_FILE="/fixtures/sources.yml")
+                guard["volumes"].append("./sources.yml:/fixtures/sources.yml:ro")
                 definition["name"] = network
                 definition["services"] = {"nftguard": guard}
                 (directory / "compose.yml").write_text(yaml.safe_dump(definition))
